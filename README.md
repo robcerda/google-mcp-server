@@ -76,7 +76,7 @@ A Model Context Protocol (MCP) server that provides Claude with comprehensive ac
 
 ```bash
 # Clone or download the repository
-git clone <repository-url>
+git clone https://github.com/robcerda/google-mcp-server
 cd google-mcp-server
 
 # Install dependencies with uv

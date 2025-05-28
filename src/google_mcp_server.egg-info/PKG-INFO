@@ -72,7 +72,7 @@ A Model Context Protocol (MCP) server that provides Claude with comprehensive ac
    - **Google Drive API**
    - **Gmail API**
    - **Google Calendar API**
-   - **Google+ API** (for user profile information)
+   - **People API** (for contacts and user profile information)
 
 ### Step 3: Configure OAuth Consent Screen
 
@@ -111,7 +111,7 @@ A Model Context Protocol (MCP) server that provides Claude with comprehensive ac
 
 ```bash
 # Clone or download the repository
-git clone <repository-url>
+git clone https://github.com/robcerda/google-mcp-server
 cd google-mcp-server
 
 # Install dependencies with uv
@@ -156,8 +156,9 @@ Add the server to your Claude Desktop configuration file:
 {
   "mcpServers": {
     "google-services": {
-      "command": "mcp",
-      "args": ["run", "/path/to/google-mcp-server"]
+      "command": "/opt/homebrew/bin/uv",
+      "args": ["run", "mcp", "run", "server.py"],
+      "cwd": "/path/to/google-mcp-server"
     }
   }
 }
@@ -168,24 +169,26 @@ Add the server to your Claude Desktop configuration file:
 {
   "mcpServers": {
     "google-services": {
-      "command": "mcp",
-      "args": ["run", "/Users/rob/Scripts/google-mcp-server"]
+      "command": "/opt/homebrew/bin/uv",
+      "args": ["run", "mcp", "run", "server.py"],
+      "cwd": "/Users/rob/Scripts/google-mcp-server"
     }
   }
 }
 ```
 
-### 3. Test with MCP
+**Note**: Use the full path to `uv` (find yours with `which uv`) to ensure Claude Desktop can locate it.
+
+### 3. Test the Server
 
 Before using with Claude Desktop, test the server:
 
 ```bash
-# Test the server directly
-uv run mcp run /path/to/google-mcp-server
+# Test authentication and API access
+uv run python test_cli.py
 
-# Or from within the project directory
-cd google-mcp-server
-uv run mcp run .
+# Test the MCP server directly 
+uv run mcp run server.py
 ```
 
 ## Usage
@@ -283,9 +286,10 @@ Make sure to update the authorized redirect URIs in your Google Cloud Console ac
 
 ### MCP Issues
 
-1. **"command not found: mcp"**: Run `uv sync` to install dependencies including `mcp[cli]`
-2. **"spawn google-mcp-server ENOENT"**: Use `mcp run /path/to/project` instead of direct executable
-3. **Server won't start**: Test with `uv run mcp run /path/to/google-mcp-server` first
+1. **"Failed to spawn: mcp"**: Use full path to `uv` in Claude Desktop config (e.g., `/opt/homebrew/bin/uv`)
+2. **"command not found: mcp"**: Run `uv sync` to install dependencies including `mcp[cli]`
+3. **"spawn google-mcp-server ENOENT"**: Use `mcp run server.py` instead of direct executable
+4. **Server won't start**: Test with `uv run mcp run server.py` first
 
 ### Authentication Issues
 
@@ -306,7 +310,7 @@ Make sure to update the authorized redirect URIs in your Google Cloud Console ac
 ### Testing Steps
 
 1. **Test dependencies**: `uv sync`
-2. **Test server directly**: `uv run mcp run /path/to/google-mcp-server`
+2. **Test server directly**: `uv run mcp run server.py`
 3. **Test authentication**: `uv run python test_cli.py`
 4. **Check Claude Desktop logs**: Look for connection errors
 

@@ -17,10 +17,14 @@ logger = logging.getLogger(__name__)
 # Default scopes - comprehensive access to Google services
 DEFAULT_SCOPES = [
     'openid',
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/drive.appdata',
+    'https://www.googleapis.com/auth/gmail.labels',
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/contacts',
+    'https://www.googleapis.com/auth/gmail.addons.current.message.readonly',
     'https://www.googleapis.com/auth/userinfo.profile',
     'https://www.googleapis.com/auth/userinfo.email',
 ]
@@ -48,6 +52,8 @@ class GoogleAuthManager:
         self.scopes = DEFAULT_SCOPES.copy()
         if additional_scopes:
             self.scopes.extend(additional_scopes)
+        # Sort scopes to ensure consistent ordering
+        self.scopes = sorted(self.scopes)
         
         # Credential storage path
         self.credentials_dir = Path.home() / '.config' / 'google-mcp-server'
@@ -116,7 +122,11 @@ class GoogleAuthManager:
             import socket
             def check_port(port):
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    return s.connect_ex(('localhost', port)) != 0
+                    try:
+                        s.bind(('localhost', port))
+                        return True
+                    except OSError:
+                        return False
             
             original_port = port
             for attempt in range(5):
@@ -129,6 +139,10 @@ class GoogleAuthManager:
             print(f"Starting OAuth2 flow...")
             print(f"Your browser will open to authenticate with Google.")
             print(f"If the browser doesn't open automatically, visit the URL that will be displayed.")
+            
+            # Update redirect URI if port changed
+            if port != original_port:
+                flow.redirect_uri = f"http://localhost:{port}"
             
             # Run local server and open browser
             creds = flow.run_local_server(port=port, open_browser=True)

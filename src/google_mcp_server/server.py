@@ -17,6 +17,7 @@ from .calendar_client import GoogleCalendarClient
 from .integration_client import GoogleIntegrationClient
 from .contacts_client import GoogleContactsClient
 from .smart_tools import SmartGoogleTools
+from .safe_tools import SafeGoogleTools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +57,7 @@ calendar_client: Optional[GoogleCalendarClient] = None
 integration_client: Optional[GoogleIntegrationClient] = None
 contacts_client: Optional[GoogleContactsClient] = None
 smart_tools: Optional[SmartGoogleTools] = None
+safe_tools: Optional[SafeGoogleTools] = None
 
 # Create FastMCP server
 mcp = FastMCP("google-mcp-server")
@@ -118,6 +120,18 @@ def get_smart_tools() -> SmartGoogleTools:
         )
     return smart_tools
 
+def get_safe_tools() -> SafeGoogleTools:
+    """Get or create Safe Google Tools."""
+    global safe_tools
+    if not safe_tools:
+        safe_tools = SafeGoogleTools(
+            get_contacts_client(),
+            get_gmail_client(),
+            get_drive_client(),
+            get_calendar_client()
+        )
+    return safe_tools
+
 # Authentication tools
 @mcp.tool()
 def google_auth_status() -> str:
@@ -135,7 +149,7 @@ def google_auth_status() -> str:
 def google_auth_revoke() -> str:
     """Revoke Google authentication and clear stored credentials"""
     try:
-        global drive_client, gmail_client, calendar_client, integration_client, contacts_client, smart_tools
+        global drive_client, gmail_client, calendar_client, integration_client, contacts_client, smart_tools, safe_tools
         success = auth_manager.revoke_credentials()
         if success:
             # Clear cached clients
@@ -145,6 +159,7 @@ def google_auth_revoke() -> str:
             integration_client = None
             contacts_client = None
             smart_tools = None
+            safe_tools = None
             return "✅ Authentication revoked successfully"
         else:
             return "❌ Failed to revoke authentication"
@@ -834,10 +849,10 @@ def contacts_resolve_email(name_or_email: str) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-# Smart tools with contact resolution
+# UNSAFE Smart tools (immediate execution - use with caution)
 @mcp.tool()
-def smart_send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
-    """Send email with automatic contact resolution (use names or emails)"""
+def smart_send_email_unsafe(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
+    """⚠️ UNSAFE: Send email immediately without confirmation (use names or emails)"""
     try:
         tools = get_smart_tools()
         result = tools.smart_send_email(
@@ -851,9 +866,26 @@ def smart_send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = 
     except Exception as e:
         return f"Error: {str(e)}"
 
+# SAFE Smart tools with confirmation required
 @mcp.tool()
-def smart_share_file(file_id: str, recipient: str, role: str = "reader", send_notification: bool = True, message: str = "") -> str:
-    """Share file with automatic contact resolution (use names or emails)"""
+def prepare_send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
+    """✅ SAFE: Prepare email for sending - shows preview and requires confirmation"""
+    try:
+        tools = get_safe_tools()
+        result = tools.prepare_email(
+            to=to,
+            subject=subject,
+            body=body,
+            cc=cc if cc else "",
+            bcc=bcc if bcc else ""
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def smart_share_file_unsafe(file_id: str, recipient: str, role: str = "reader", send_notification: bool = True, message: str = "") -> str:
+    """⚠️ UNSAFE: Share file immediately without confirmation (use names or emails)"""
     try:
         tools = get_smart_tools()
         result = tools.smart_share_file(
@@ -868,8 +900,24 @@ def smart_share_file(file_id: str, recipient: str, role: str = "reader", send_no
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def smart_create_event(summary: str, start_time: str, end_time: str, attendees: str = "", calendar_id: str = "primary", description: str = "", location: str = "") -> str:
-    """Create calendar event with automatic attendee resolution (use names or emails)"""
+def prepare_share_file(file_id: str, recipient: str, role: str = "reader", send_notification: bool = True, message: str = "") -> str:
+    """✅ SAFE: Prepare file sharing - shows preview and requires confirmation"""
+    try:
+        tools = get_safe_tools()
+        result = tools.prepare_file_share(
+            file_id=file_id,
+            recipient=recipient,
+            role=role,
+            send_notification=send_notification,
+            message=message
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def smart_create_event_unsafe(summary: str, start_time: str, end_time: str, attendees: str = "", calendar_id: str = "primary", description: str = "", location: str = "") -> str:
+    """⚠️ UNSAFE: Create calendar event immediately without confirmation (use names or emails)"""
     try:
         tools = get_smart_tools()
         result = tools.smart_create_event(
@@ -886,8 +934,26 @@ def smart_create_event(summary: str, start_time: str, end_time: str, attendees: 
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def smart_forward_email(message_id: str, to: str, body: str = "") -> str:
-    """Forward email with automatic contact resolution (use names or emails)"""
+def prepare_create_event(summary: str, start_time: str, end_time: str, attendees: str = "", calendar_id: str = "primary", description: str = "", location: str = "") -> str:
+    """✅ SAFE: Prepare calendar event - shows preview and requires confirmation"""
+    try:
+        tools = get_safe_tools()
+        result = tools.prepare_calendar_event(
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            attendees=attendees,
+            calendar_id=calendar_id,
+            description=description,
+            location=location
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def smart_forward_email_unsafe(message_id: str, to: str, body: str = "") -> str:
+    """⚠️ UNSAFE: Forward email immediately without confirmation (use names or emails)"""
     try:
         tools = get_smart_tools()
         result = tools.smart_forward_email(
@@ -898,6 +964,48 @@ def smart_forward_email(message_id: str, to: str, body: str = "") -> str:
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"
+
+# Confirmation tools
+@mcp.tool()
+def confirm_send_email(confirmation_data: str) -> str:
+    """✅ Confirm and send the prepared email"""
+    try:
+        import json
+        data = json.loads(confirmation_data)
+        tools = get_safe_tools()
+        result = tools.confirm_send_email(data)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def confirm_share_file(confirmation_data: str) -> str:
+    """✅ Confirm and share the prepared file"""
+    try:
+        import json
+        data = json.loads(confirmation_data)
+        tools = get_safe_tools()
+        result = tools.confirm_share_file(data)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def confirm_create_event(confirmation_data: str) -> str:
+    """✅ Confirm and create the prepared calendar event"""
+    try:
+        import json
+        data = json.loads(confirmation_data)
+        tools = get_safe_tools()
+        result = tools.confirm_create_event(data)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def cancel_operation() -> str:
+    """❌ Cancel any pending operation (email, file share, calendar event)"""
+    return "✅ Operation cancelled. No action was taken."
 
 # Export for mcp run
 app = mcp

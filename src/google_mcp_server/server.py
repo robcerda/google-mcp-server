@@ -15,6 +15,8 @@ from .drive_client import GoogleDriveClient
 from .gmail_client import GmailClient
 from .calendar_client import GoogleCalendarClient
 from .integration_client import GoogleIntegrationClient
+from .contacts_client import GoogleContactsClient
+from .smart_tools import SmartGoogleTools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +54,8 @@ drive_client: Optional[GoogleDriveClient] = None
 gmail_client: Optional[GmailClient] = None
 calendar_client: Optional[GoogleCalendarClient] = None
 integration_client: Optional[GoogleIntegrationClient] = None
+contacts_client: Optional[GoogleContactsClient] = None
+smart_tools: Optional[SmartGoogleTools] = None
 
 # Create FastMCP server
 mcp = FastMCP("google-mcp-server")
@@ -95,6 +99,25 @@ def get_integration_client() -> GoogleIntegrationClient:
         )
     return integration_client
 
+def get_contacts_client() -> GoogleContactsClient:
+    """Get or create Google Contacts client."""
+    global contacts_client
+    if not contacts_client:
+        contacts_client = GoogleContactsClient(get_credentials())
+    return contacts_client
+
+def get_smart_tools() -> SmartGoogleTools:
+    """Get or create Smart Google Tools."""
+    global smart_tools
+    if not smart_tools:
+        smart_tools = SmartGoogleTools(
+            get_contacts_client(),
+            get_gmail_client(),
+            get_drive_client(),
+            get_calendar_client()
+        )
+    return smart_tools
+
 # Authentication tools
 @mcp.tool()
 def google_auth_status() -> str:
@@ -112,7 +135,7 @@ def google_auth_status() -> str:
 def google_auth_revoke() -> str:
     """Revoke Google authentication and clear stored credentials"""
     try:
-        global drive_client, gmail_client, calendar_client, integration_client
+        global drive_client, gmail_client, calendar_client, integration_client, contacts_client, smart_tools
         success = auth_manager.revoke_credentials()
         if success:
             # Clear cached clients
@@ -120,6 +143,8 @@ def google_auth_revoke() -> str:
             gmail_client = None
             calendar_client = None
             integration_client = None
+            contacts_client = None
+            smart_tools = None
             return "✅ Authentication revoked successfully"
         else:
             return "❌ Failed to revoke authentication"
@@ -696,6 +721,159 @@ def unified_search(query: str, search_drive: bool = True, search_gmail: bool = T
             search_gmail=search_gmail,
             search_calendar=search_calendar,
             max_results=max_results
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Contact management tools
+@mcp.tool()
+def contacts_debug() -> str:
+    """Debug contacts API connection and permissions"""
+    try:
+        client = get_contacts_client()
+        
+        # Test basic API access
+        try:
+            result = client.service.people().connections().list(
+                resourceName='people/me',
+                pageSize=1,
+                personFields='names'
+            ).execute()
+            
+            connections = result.get('connections', [])
+            total_size = result.get('totalSize', 0)
+            
+            debug_info = {
+                'api_access': 'SUCCESS',
+                'total_contacts': total_size,
+                'sample_returned': len(connections),
+                'next_page_token': result.get('nextPageToken', 'None'),
+                'sync_token': result.get('syncToken', 'None')
+            }
+            
+            if connections:
+                sample_contact = connections[0]
+                debug_info['sample_contact_fields'] = list(sample_contact.keys())
+                if 'names' in sample_contact:
+                    debug_info['sample_contact_name'] = sample_contact['names'][0].get('displayName', 'No display name')
+            
+            return str({
+                'success': True,
+                'debug_info': debug_info,
+                'suggestion': 'API access working. If total_contacts is 0, you may need to add contacts to your Google account first.'
+            })
+            
+        except Exception as api_error:
+            return str({
+                'success': False,
+                'api_error': str(api_error),
+                'suggestion': 'API access failed. You may need to re-authenticate with the contacts scope.'
+            })
+            
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def contacts_search(query: str, max_results: int = 10) -> str:
+    """Search contacts by name or email"""
+    try:
+        client = get_contacts_client()
+        result = client.search_contacts(query=query, max_results=max_results)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def contacts_list(max_results: int = 50) -> str:
+    """List all contacts"""
+    try:
+        client = get_contacts_client()
+        result = client.list_contacts(max_results=max_results)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def contacts_get(resource_name: str) -> str:
+    """Get detailed contact information"""
+    try:
+        client = get_contacts_client()
+        result = client.get_contact(resource_name=resource_name)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def contacts_resolve_email(name_or_email: str) -> str:
+    """Resolve a contact name to email address"""
+    try:
+        client = get_contacts_client()
+        result = client.resolve_contact_email(name_or_email=name_or_email)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Smart tools with contact resolution
+@mcp.tool()
+def smart_send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
+    """Send email with automatic contact resolution (use names or emails)"""
+    try:
+        tools = get_smart_tools()
+        result = tools.smart_send_email(
+            to=to,
+            subject=subject,
+            body=body,
+            cc=cc if cc else "",
+            bcc=bcc if bcc else ""
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def smart_share_file(file_id: str, recipient: str, role: str = "reader", send_notification: bool = True, message: str = "") -> str:
+    """Share file with automatic contact resolution (use names or emails)"""
+    try:
+        tools = get_smart_tools()
+        result = tools.smart_share_file(
+            file_id=file_id,
+            recipient=recipient,
+            role=role,
+            send_notification=send_notification,
+            message=message
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def smart_create_event(summary: str, start_time: str, end_time: str, attendees: str = "", calendar_id: str = "primary", description: str = "", location: str = "") -> str:
+    """Create calendar event with automatic attendee resolution (use names or emails)"""
+    try:
+        tools = get_smart_tools()
+        result = tools.smart_create_event(
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            attendees=attendees,
+            calendar_id=calendar_id,
+            description=description,
+            location=location
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def smart_forward_email(message_id: str, to: str, body: str = "") -> str:
+    """Forward email with automatic contact resolution (use names or emails)"""
+    try:
+        tools = get_smart_tools()
+        result = tools.smart_forward_email(
+            message_id=message_id,
+            to=to,
+            body=body
         )
         return str(result)
     except Exception as e:

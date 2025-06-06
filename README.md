@@ -24,7 +24,8 @@ A Model Context Protocol (MCP) server that provides Claude with comprehensive ac
   - Unified search across all Google services
 - **🔑 Custom Scopes**: Configure additional OAuth2 scopes for extended functionality
 - **🏠 Local Credential Management**: Keep your API keys and tokens on your local machine
-- **🚀 41 Total Tools**: Most comprehensive Google MCP integration available
+- **🚀 50 Total Tools**: Most comprehensive Google MCP integration available
+- **👥 Smart Contact Resolution**: Use contact names instead of email addresses
 
 ## Prerequisites
 
@@ -209,7 +210,7 @@ When you first use the server, it will automatically launch your browser for OAu
 
 Your credentials will be securely stored locally in `~/.config/google-mcp-server/token.json`.
 
-### Available Tools (41 Total)
+### Available Tools (50 Total)
 
 #### Authentication Tools
 
@@ -332,6 +333,34 @@ Your credentials will be securely stored locally in `~/.config/google-mcp-server
 - **unified_search**: Search across Gmail, Drive, and Calendar simultaneously
   - Parameters: `query`, `search_drive`, `search_gmail`, `search_calendar`, `max_results`
 
+#### Contact Management Tools (4 tools)
+
+- **contacts_search**: Search contacts by name or email
+  - Parameters: `query`, `max_results`
+- **contacts_list**: List all contacts
+  - Parameters: `max_results`
+- **contacts_get**: Get detailed contact information
+  - Parameters: `resource_name`
+- **contacts_resolve_email**: Resolve contact name to email address
+  - Parameters: `name_or_email`
+
+#### 🧠 Smart Tools with Contact Resolution (4 tools)
+
+These tools automatically resolve contact names to email addresses, making them much more user-friendly:
+
+- **smart_send_email**: Send email with automatic contact resolution
+  - Parameters: `to` (name or email), `subject`, `body`, `cc`, `bcc`
+  - Example: `smart_send_email('John Smith', 'Meeting Tomorrow', 'Hi John...')`
+- **smart_share_file**: Share file with automatic contact resolution
+  - Parameters: `file_id`, `recipient` (name or email), `role`, `send_notification`, `message`
+  - Example: `smart_share_file('file123', 'John Smith', 'editor')`
+- **smart_create_event**: Create calendar event with automatic attendee resolution
+  - Parameters: `summary`, `start_time`, `end_time`, `attendees` (names or emails), `calendar_id`, `description`, `location`
+  - Example: `smart_create_event('Team Meeting', '2024-01-15T14:00:00', '2024-01-15T15:00:00', 'John Smith, Jane Doe')`
+- **smart_forward_email**: Forward email with automatic contact resolution
+  - Parameters: `message_id`, `to` (name or email), `body`
+  - Example: `smart_forward_email('msg123', 'John Smith', 'FYI - please review')`
+
 ### Example Commands
 
 #### Basic Operations
@@ -409,6 +438,27 @@ Check free/busy time for calendars [cal1,cal2] between 9 AM and 5 PM tomorrow
 
 # Respond to meeting invitations
 Accept the meeting invitation for event [event_id]
+```
+
+#### 👥 Smart Contact Resolution
+```
+# Search your contacts
+Search my contacts for "spencer"
+
+# Send email using contact names (no need for email addresses!)
+Send an email to Spencer Varney about "Project Update" with message "Hi Spencer, the project is on track..."
+
+# Share files using names
+Share file [file_id] with Spencer Varney as editor
+
+# Create meetings with attendees by name
+Create a team meeting tomorrow at 2 PM with Spencer Varney and John Smith
+
+# The system will automatically:
+# - Find matching contacts in your address book
+# - Resolve names to email addresses  
+# - Handle multiple matches by asking for clarification
+# - Work seamlessly with existing Gmail, Drive, and Calendar tools
 ```
 
 #### Cross-Service Integration

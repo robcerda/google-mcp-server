@@ -776,10 +776,30 @@ def contacts_debug() -> str:
 
 @mcp.tool()
 def contacts_search(query: str, max_results: int = 10) -> str:
-    """Search contacts by name or email"""
+    """Search contacts by name or email using improved searchContacts API"""
     try:
         client = get_contacts_client()
         result = client.search_contacts(query=query, max_results=max_results)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def contacts_search_directory(query: str, max_results: int = 10) -> str:
+    """Search organization directory (Google Workspace accounts only)"""
+    try:
+        client = get_contacts_client()
+        result = client.search_directory(query=query, max_results=max_results)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def contacts_search_all(query: str, max_results: int = 10) -> str:
+    """Search both personal contacts and directory (comprehensive search)"""
+    try:
+        client = get_contacts_client()
+        result = client.search_all_sources(query=query, max_results=max_results)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"

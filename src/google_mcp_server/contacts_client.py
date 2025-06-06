@@ -26,7 +26,7 @@ class GoogleContactsClient:
         
     def search_contacts(self, query: str, max_results: int = 10) -> Dict[str, Any]:
         """
-        Search contacts by name or email.
+        Search contacts by name or email using the searchContacts API.
         
         Args:
             query: Search query (name or email)
@@ -36,18 +36,75 @@ class GoogleContactsClient:
             Dictionary containing search results
         """
         try:
-            # Get all contacts
+            # First try the searchContacts API (better for searching)
+            search_results = []
+            try:
+                search_result = self.service.people().searchContacts(
+                    query=query,
+                    readMask='names,emailAddresses,phoneNumbers,organizations',
+                    sources=['READ_SOURCE_TYPE_CONTACT'],
+                    pageSize=max_results
+                ).execute()
+                
+                search_results = search_result.get('results', [])
+                logger.info(f"searchContacts API returned {len(search_results)} results for '{query}'")
+                
+            except HttpError as search_error:
+                logger.warning(f"searchContacts API failed: {search_error}, falling back to connections list")
+                # Fall back to the connections method if searchContacts fails
+                return self._search_via_connections(query, max_results)
+            
+            # Format search results
+            matching_contacts = []
+            for result in search_results:
+                person = result.get('person', {})
+                if person:
+                    formatted_contact = self._format_contact(person)
+                    # Add relevance score from API if available
+                    formatted_contact['match_score'] = 100  # SearchContacts already filtered
+                    matching_contacts.append(formatted_contact)
+            
+            return {
+                'success': True,
+                'contacts': matching_contacts,
+                'totalMatches': len(matching_contacts),
+                'query': query,
+                'source': 'searchContacts_API'
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error searching contacts: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error searching contacts: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _search_via_connections(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+        """
+        Fallback search method using connections.list (the old approach).
+        
+        Args:
+            query: Search query
+            max_results: Maximum results
+            
+        Returns:
+            Dictionary containing search results
+        """
+        try:
             contacts_result = self.service.people().connections().list(
                 resourceName='people/me',
-                pageSize=min(max_results * 3, 1000),  # Get more to filter locally
+                pageSize=min(max_results * 3, 1000),
                 personFields='names,emailAddresses,phoneNumbers,organizations'
             ).execute()
             
-            # Debug logging
-            total_contacts = contacts_result.get('totalSize', 0)
-            logger.info(f"People API returned {total_contacts} total contacts")
-            
             contacts = contacts_result.get('connections', [])
+            total_contacts = contacts_result.get('totalSize', 0)
             
             # Filter contacts based on query
             matching_contacts = []
@@ -60,10 +117,8 @@ class GoogleContactsClient:
                     formatted_contact['match_score'] = match_score
                     matching_contacts.append(formatted_contact)
             
-            # Sort by match score (higher is better)
+            # Sort by match score
             matching_contacts.sort(key=lambda x: x['match_score'], reverse=True)
-            
-            # Limit results
             matching_contacts = matching_contacts[:max_results]
             
             return {
@@ -71,6 +126,7 @@ class GoogleContactsClient:
                 'contacts': matching_contacts,
                 'totalMatches': len(matching_contacts),
                 'query': query,
+                'source': 'connections_API',
                 'debug': {
                     'total_contacts_in_account': total_contacts,
                     'contacts_fetched': len(contacts),
@@ -78,14 +134,129 @@ class GoogleContactsClient:
                 }
             }
             
-        except HttpError as e:
-            logger.error(f"HTTP error searching contacts: {e}")
+        except Exception as e:
             return {
                 'success': False,
-                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+                'error': str(e),
+                'source': 'connections_API_fallback'
             }
+    
+    def search_directory(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+        """
+        Search organization directory (Google Workspace accounts only).
+        
+        Args:
+            query: Search query
+            max_results: Maximum results
+            
+        Returns:
+            Dictionary containing directory search results
+        """
+        try:
+            # Try directory search (Workspace accounts)
+            search_result = self.service.people().searchDirectoryPeople(
+                query=query,
+                readMask='names,emailAddresses,organizations',
+                sources=['DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE'],
+                pageSize=max_results
+            ).execute()
+            
+            results = search_result.get('people', [])
+            
+            # Format directory results
+            directory_contacts = []
+            for person in results:
+                formatted_contact = self._format_contact(person)
+                formatted_contact['match_score'] = 100  # Directory search already filtered
+                formatted_contact['source'] = 'directory'
+                directory_contacts.append(formatted_contact)
+            
+            return {
+                'success': True,
+                'contacts': directory_contacts,
+                'totalMatches': len(directory_contacts),
+                'query': query,
+                'source': 'directory_search'
+            }
+            
+        except HttpError as e:
+            if e.resp.status == 403:
+                return {
+                    'success': False,
+                    'error': 'Directory search not available (requires Google Workspace account with directory access)',
+                    'source': 'directory_search'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"Directory search error: {e.resp.status} - {e.content.decode()}",
+                    'source': 'directory_search'
+                }
         except Exception as e:
-            logger.error(f"Error searching contacts: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'source': 'directory_search'
+            }
+    
+    def search_all_sources(self, query: str, max_results: int = 10) -> Dict[str, Any]:
+        """
+        Search both personal contacts and directory (if available).
+        
+        Args:
+            query: Search query
+            max_results: Maximum results per source
+            
+        Returns:
+            Dictionary containing combined search results
+        """
+        try:
+            all_contacts = []
+            sources_used = []
+            
+            # Search personal contacts
+            personal_result = self.search_contacts(query, max_results)
+            if personal_result['success']:
+                for contact in personal_result['contacts']:
+                    contact['source'] = 'personal'
+                all_contacts.extend(personal_result['contacts'])
+                sources_used.append('personal_contacts')
+            
+            # Search directory (if available)
+            directory_result = self.search_directory(query, max_results)
+            if directory_result['success']:
+                for contact in directory_result['contacts']:
+                    contact['source'] = 'directory'
+                all_contacts.extend(directory_result['contacts'])
+                sources_used.append('directory')
+            
+            # Remove duplicates (same email address)
+            seen_emails = set()
+            unique_contacts = []
+            for contact in all_contacts:
+                email = contact.get('primaryEmail', '').lower()
+                if email and email not in seen_emails:
+                    seen_emails.add(email)
+                    unique_contacts.append(contact)
+                elif not email:  # Keep contacts without email
+                    unique_contacts.append(contact)
+            
+            # Sort by relevance (directory contacts first, then by match score)
+            unique_contacts.sort(key=lambda x: (x.get('source') != 'directory', -x.get('match_score', 0)))
+            
+            # Limit total results
+            unique_contacts = unique_contacts[:max_results]
+            
+            return {
+                'success': True,
+                'contacts': unique_contacts,
+                'totalMatches': len(unique_contacts),
+                'query': query,
+                'sources_searched': sources_used,
+                'duplicates_removed': len(all_contacts) - len(unique_contacts)
+            }
+            
+        except Exception as e:
             return {
                 'success': False,
                 'error': str(e)

@@ -967,37 +967,54 @@ def smart_forward_email_unsafe(message_id: str, to: str, body: str = "") -> str:
 
 # Confirmation tools
 @mcp.tool()
-def confirm_send_email(confirmation_data: str) -> str:
+def confirm_send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
     """✅ Confirm and send the prepared email"""
     try:
-        import json
-        data = json.loads(confirmation_data)
+        confirmation_data = {
+            'to': to,
+            'subject': subject,
+            'body': body,
+            'cc': cc if cc else None,
+            'bcc': bcc if bcc else None
+        }
         tools = get_safe_tools()
-        result = tools.confirm_send_email(data)
+        result = tools.confirm_send_email(confirmation_data)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def confirm_share_file(confirmation_data: str) -> str:
+def confirm_share_file(file_id: str, recipient_email: str, role: str = "reader", send_notification: bool = True, message: str = "") -> str:
     """✅ Confirm and share the prepared file"""
     try:
-        import json
-        data = json.loads(confirmation_data)
+        confirmation_data = {
+            'file_id': file_id,
+            'recipient_email': recipient_email,
+            'role': role,
+            'send_notification': send_notification,
+            'message': message
+        }
         tools = get_safe_tools()
-        result = tools.confirm_share_file(data)
+        result = tools.confirm_share_file(confirmation_data)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def confirm_create_event(confirmation_data: str) -> str:
+def confirm_create_event(summary: str, start_time: str, end_time: str, attendees: str = "", calendar_id: str = "primary", description: str = "", location: str = "") -> str:
     """✅ Confirm and create the prepared calendar event"""
     try:
-        import json
-        data = json.loads(confirmation_data)
+        confirmation_data = {
+            'summary': summary,
+            'start_time': start_time,
+            'end_time': end_time,
+            'attendees': attendees if attendees else None,
+            'calendar_id': calendar_id,
+            'description': description,
+            'location': location
+        }
         tools = get_safe_tools()
-        result = tools.confirm_create_event(data)
+        result = tools.confirm_create_event(confirmation_data)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"

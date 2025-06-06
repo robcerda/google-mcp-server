@@ -107,6 +107,14 @@ class SafeGoogleTools:
                     'info': bcc_info
                 }
             
+            # Create the confirmation command for Claude to use
+            confirm_command = f"confirm_send_email('{resolved_to}', '{subject}', '{body}'"
+            if resolved_cc:
+                confirm_command += f", cc='{resolved_cc}'"
+            if resolved_bcc:
+                confirm_command += f", bcc='{resolved_bcc}'"
+            confirm_command += ")"
+            
             return {
                 'success': True,
                 'requires_confirmation': True,
@@ -121,14 +129,16 @@ Body: {email_preview['body_preview']}
 {f"BCC: {bcc_info}" if resolved_bcc else ""}
 
 ⚠️  This email will be sent immediately upon confirmation.
-Please use 'confirm_send_email()' to proceed or 'cancel_email()' to abort.
+
+To proceed: {confirm_command}
+To cancel: cancel_operation()
 """,
-                'confirmation_data': {
+                'confirmation_params': {
                     'to': resolved_to,
                     'subject': subject,
                     'body': body,
-                    'cc': resolved_cc if resolved_cc else None,
-                    'bcc': resolved_bcc if resolved_bcc else None
+                    'cc': resolved_cc,
+                    'bcc': resolved_bcc
                 }
             }
             
@@ -185,6 +195,12 @@ Please use 'confirm_send_email()' to proceed or 'cancel_email()' to abort.
                 'message': message
             }
             
+            # Create the confirmation command
+            confirm_command = f"confirm_share_file('{file_id}', '{resolved_email}', '{role}', {send_notification}"
+            if message:
+                confirm_command += f", '{message}'"
+            confirm_command += ")"
+            
             return {
                 'success': True,
                 'requires_confirmation': True,
@@ -199,9 +215,11 @@ Email notification: {'Yes' if send_notification else 'No'}
 {f"Message: {message}" if message else ""}
 
 ⚠️  This will grant {role} access immediately upon confirmation.
-Please use 'confirm_share_file()' to proceed or 'cancel_share()' to abort.
+
+To proceed: {confirm_command}
+To cancel: cancel_operation()
 """,
-                'confirmation_data': {
+                'confirmation_params': {
                     'file_id': file_id,
                     'recipient_email': resolved_email,
                     'role': role,
@@ -270,6 +288,19 @@ Please use 'confirm_share_file()' to proceed or 'cancel_share()' to abort.
                 'attendee_count': len(resolved_attendees)
             }
             
+            # Create the confirmation command
+            attendee_str = ",".join(resolved_attendees) if resolved_attendees else ""
+            confirm_command = f"confirm_create_event('{summary}', '{start_time}', '{end_time}'"
+            if attendee_str:
+                confirm_command += f", attendees='{attendee_str}'"
+            if calendar_id != "primary":
+                confirm_command += f", calendar_id='{calendar_id}'"
+            if description:
+                confirm_command += f", description='{description}'"
+            if location:
+                confirm_command += f", location='{location}'"
+            confirm_command += ")"
+            
             return {
                 'success': True,
                 'requires_confirmation': True,
@@ -286,13 +317,15 @@ Attendees ({len(resolved_attendees)}):
 {chr(10).join(attendee_info) if attendee_info else "  No attendees"}
 
 ⚠️  Invitations will be sent to all attendees immediately upon confirmation.
-Please use 'confirm_create_event()' to proceed or 'cancel_event()' to abort.
+
+To proceed: {confirm_command}
+To cancel: cancel_operation()
 """,
-                'confirmation_data': {
+                'confirmation_params': {
                     'summary': summary,
                     'start_time': start_time,
                     'end_time': end_time,
-                    'attendees': ",".join(resolved_attendees) if resolved_attendees else None,
+                    'attendees': attendee_str,
                     'calendar_id': calendar_id,
                     'description': description,
                     'location': location

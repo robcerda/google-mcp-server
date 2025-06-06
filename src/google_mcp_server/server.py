@@ -153,6 +153,21 @@ def drive_upload_file(name: str, content: str, parent_folder_id: str = "", mime_
         return f"Error: {str(e)}"
 
 @mcp.tool()
+def drive_create_file(name: str, content: str = "", parent_folder_id: str = "", mime_type: str = "text/plain") -> str:
+    """Create a file in Google Drive"""
+    try:
+        client = get_drive_client()
+        result = client.create_file(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id if parent_folder_id else None,
+            mime_type=mime_type
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
 def drive_create_folder(name: str, parent_folder_id: str = "") -> str:
     """Create a folder in Google Drive"""
     try:

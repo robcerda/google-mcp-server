@@ -3,7 +3,7 @@
 import json
 import logging
 from typing import Dict, List, Optional, Any
-from io import StringIO
+from io import BytesIO
 import base64
 
 from google.oauth2.credentials import Credentials
@@ -224,8 +224,9 @@ class GoogleDriveClient:
                 file_metadata['parents'] = [parent_folder_id]
             
             # Create media upload
+            content_bytes = content.encode('utf-8')
             media = MediaIoBaseUpload(
-                StringIO(content),
+                BytesIO(content_bytes),
                 mimetype=mime_type,
                 resumable=True
             )
@@ -259,6 +260,23 @@ class GoogleDriveClient:
                 'success': False,
                 'error': str(e)
             }
+    
+    def create_file(self, name: str, content: str = "", 
+                    parent_folder_id: Optional[str] = None,
+                    mime_type: str = "text/plain") -> Dict[str, Any]:
+        """
+        Create a new file in Google Drive.
+        
+        Args:
+            name: File name
+            content: File content (default: empty string)
+            parent_folder_id: Parent folder ID (optional)
+            mime_type: MIME type (default: text/plain)
+            
+        Returns:
+            Dictionary containing file creation result
+        """
+        return self.upload_file(name, content, parent_folder_id, mime_type)
     
     def create_folder(self, name: str, 
                       parent_folder_id: Optional[str] = None) -> Dict[str, Any]:

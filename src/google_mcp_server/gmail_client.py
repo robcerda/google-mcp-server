@@ -403,3 +403,457 @@ class GmailClient:
                 'success': False,
                 'error': str(e)
             }
+    
+    def reply_to_message(self, message_id: str, body: str, 
+                        include_original: bool = True) -> Dict[str, Any]:
+        """
+        Reply to a Gmail message.
+        
+        Args:
+            message_id: Original message ID to reply to
+            body: Reply body text
+            include_original: Include original message in reply
+            
+        Returns:
+            Dictionary containing reply result
+        """
+        try:
+            # Get original message
+            original_message = self.service.users().messages().get(
+                userId='me',
+                id=message_id,
+                format='metadata',
+                metadataHeaders=['Message-ID', 'Subject', 'From', 'To', 'References', 'In-Reply-To']
+            ).execute()
+            
+            headers = {h['name']: h['value'] for h in original_message['payload']['headers']}
+            
+            # Create reply message
+            reply = MIMEText(body)
+            reply['to'] = headers.get('From', '')
+            reply['subject'] = f"Re: {headers.get('Subject', '').replace('Re: ', '')}"
+            reply['in-reply-to'] = headers.get('Message-ID', '')
+            reply['references'] = f"{headers.get('References', '')} {headers.get('Message-ID', '')}".strip()
+            
+            # Encode and send
+            raw_reply = base64.urlsafe_b64encode(reply.as_bytes()).decode()
+            
+            sent_reply = self.service.users().messages().send(
+                userId='me',
+                body={'raw': raw_reply, 'threadId': original_message['threadId']}
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': {
+                    'id': sent_reply['id'],
+                    'threadId': sent_reply['threadId']
+                },
+                'result': f"Reply sent successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error replying to message: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error replying to message: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def forward_message(self, message_id: str, to: str, body: str = "") -> Dict[str, Any]:
+        """
+        Forward a Gmail message.
+        
+        Args:
+            message_id: Message ID to forward
+            to: Recipient email address
+            body: Additional message body
+            
+        Returns:
+            Dictionary containing forward result
+        """
+        try:
+            # Get original message
+            original_message = self.service.users().messages().get(
+                userId='me',
+                id=message_id,
+                format='full'
+            ).execute()
+            
+            headers = {h['name']: h['value'] for h in original_message['payload']['headers']}
+            original_body = self._extract_message_body(original_message)
+            
+            # Create forward message
+            forward_text = f"{body}\n\n---------- Forwarded message ---------\n"
+            forward_text += f"From: {headers.get('From', '')}\n"
+            forward_text += f"Date: {headers.get('Date', '')}\n"
+            forward_text += f"Subject: {headers.get('Subject', '')}\n"
+            forward_text += f"To: {headers.get('To', '')}\n\n"
+            forward_text += original_body.get('text', original_body.get('html', ''))
+            
+            forward = MIMEText(forward_text)
+            forward['to'] = to
+            forward['subject'] = f"Fwd: {headers.get('Subject', '')}"
+            
+            # Encode and send
+            raw_forward = base64.urlsafe_b64encode(forward.as_bytes()).decode()
+            
+            sent_forward = self.service.users().messages().send(
+                userId='me',
+                body={'raw': raw_forward}
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': {
+                    'id': sent_forward['id'],
+                    'threadId': sent_forward['threadId']
+                },
+                'result': f"Message forwarded successfully to {to}"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error forwarding message: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error forwarding message: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def send_html_message(self, to: str, subject: str, html_body: str,
+                         text_body: str = "", cc: Optional[str] = None, 
+                         bcc: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Send an HTML Gmail message.
+        
+        Args:
+            to: Recipient email address
+            subject: Email subject
+            html_body: HTML email body
+            text_body: Plain text fallback body
+            cc: CC email addresses (comma-separated)
+            bcc: BCC email addresses (comma-separated)
+            
+        Returns:
+            Dictionary containing send result
+        """
+        try:
+            # Create multipart message
+            message = MIMEMultipart('alternative')
+            message['to'] = to
+            message['subject'] = subject
+            
+            if cc:
+                message['cc'] = cc
+            if bcc:
+                message['bcc'] = bcc
+            
+            # Add text and HTML parts
+            if text_body:
+                text_part = MIMEText(text_body, 'plain')
+                message.attach(text_part)
+            
+            html_part = MIMEText(html_body, 'html')
+            message.attach(html_part)
+            
+            # Encode and send
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            
+            sent_message = self.service.users().messages().send(
+                userId='me',
+                body={'raw': raw_message}
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': {
+                    'id': sent_message['id'],
+                    'threadId': sent_message['threadId']
+                },
+                'result': f"HTML message sent successfully to {to}"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error sending HTML message: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error sending HTML message: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def archive_message(self, message_id: str) -> Dict[str, Any]:
+        """
+        Archive a Gmail message.
+        
+        Args:
+            message_id: Gmail message ID to archive
+            
+        Returns:
+            Dictionary containing archive result
+        """
+        try:
+            # Remove INBOX label to archive
+            self.service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'removeLabelIds': ['INBOX']}
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': f"Message {message_id} archived successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error archiving message: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error archiving message: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def delete_message(self, message_id: str) -> Dict[str, Any]:
+        """
+        Delete a Gmail message (move to trash).
+        
+        Args:
+            message_id: Gmail message ID to delete
+            
+        Returns:
+            Dictionary containing delete result
+        """
+        try:
+            # Move to trash
+            self.service.users().messages().trash(
+                userId='me',
+                id=message_id
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': f"Message {message_id} moved to trash successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error deleting message: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error deleting message: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def add_label(self, message_id: str, label_ids: List[str]) -> Dict[str, Any]:
+        """
+        Add labels to a Gmail message.
+        
+        Args:
+            message_id: Gmail message ID
+            label_ids: List of label IDs to add
+            
+        Returns:
+            Dictionary containing result
+        """
+        try:
+            self.service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'addLabelIds': label_ids}
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': f"Labels {label_ids} added to message {message_id}"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error adding labels: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error adding labels: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def remove_label(self, message_id: str, label_ids: List[str]) -> Dict[str, Any]:
+        """
+        Remove labels from a Gmail message.
+        
+        Args:
+            message_id: Gmail message ID
+            label_ids: List of label IDs to remove
+            
+        Returns:
+            Dictionary containing result
+        """
+        try:
+            self.service.users().messages().modify(
+                userId='me',
+                id=message_id,
+                body={'removeLabelIds': label_ids}
+            ).execute()
+            
+            return {
+                'success': True,
+                'message': f"Labels {label_ids} removed from message {message_id}"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error removing labels: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error removing labels: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def create_draft(self, to: str, subject: str, body: str,
+                    cc: Optional[str] = None, bcc: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a Gmail draft.
+        
+        Args:
+            to: Recipient email address
+            subject: Email subject
+            body: Email body
+            cc: CC email addresses (comma-separated)
+            bcc: BCC email addresses (comma-separated)
+            
+        Returns:
+            Dictionary containing draft creation result
+        """
+        try:
+            # Create message
+            message = MIMEText(body)
+            message['to'] = to
+            message['subject'] = subject
+            
+            if cc:
+                message['cc'] = cc
+            if bcc:
+                message['bcc'] = bcc
+            
+            # Encode message
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+            
+            # Create draft
+            draft = self.service.users().drafts().create(
+                userId='me',
+                body={'message': {'raw': raw_message}}
+            ).execute()
+            
+            return {
+                'success': True,
+                'draft': {
+                    'id': draft['id'],
+                    'message': {
+                        'id': draft['message']['id'],
+                        'threadId': draft['message']['threadId']
+                    }
+                },
+                'result': f"Draft created successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error creating draft: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error creating draft: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def list_drafts(self, max_results: int = 10) -> Dict[str, Any]:
+        """
+        List Gmail drafts.
+        
+        Args:
+            max_results: Maximum number of drafts to return
+            
+        Returns:
+            Dictionary containing drafts list
+        """
+        try:
+            results = self.service.users().drafts().list(
+                userId='me',
+                maxResults=max_results
+            ).execute()
+            
+            drafts = results.get('drafts', [])
+            
+            formatted_drafts = []
+            for draft in drafts:
+                # Get draft details
+                draft_details = self.service.users().drafts().get(
+                    userId='me',
+                    id=draft['id'],
+                    format='metadata',
+                    metadataHeaders=['Subject', 'From', 'To', 'Date']
+                ).execute()
+                
+                headers = {h['name']: h['value'] for h in draft_details['message']['payload']['headers']}
+                
+                formatted_draft = {
+                    'id': draft['id'],
+                    'messageId': draft_details['message']['id'],
+                    'threadId': draft_details['message']['threadId'],
+                    'subject': headers.get('Subject', ''),
+                    'to': headers.get('To', ''),
+                    'date': headers.get('Date', '')
+                }
+                formatted_drafts.append(formatted_draft)
+            
+            return {
+                'success': True,
+                'drafts': formatted_drafts,
+                'totalDrafts': len(formatted_drafts)
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error listing drafts: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error listing drafts: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }

@@ -14,6 +14,7 @@ from .auth import GoogleAuthManager
 from .drive_client import GoogleDriveClient
 from .gmail_client import GmailClient
 from .calendar_client import GoogleCalendarClient
+from .integration_client import GoogleIntegrationClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +51,7 @@ auth_manager = GoogleAuthManager(
 drive_client: Optional[GoogleDriveClient] = None
 gmail_client: Optional[GmailClient] = None
 calendar_client: Optional[GoogleCalendarClient] = None
+integration_client: Optional[GoogleIntegrationClient] = None
 
 # Create FastMCP server
 mcp = FastMCP("google-mcp-server")
@@ -82,6 +84,17 @@ def get_calendar_client() -> GoogleCalendarClient:
         calendar_client = GoogleCalendarClient(get_credentials())
     return calendar_client
 
+def get_integration_client() -> GoogleIntegrationClient:
+    """Get or create Google Integration client."""
+    global integration_client
+    if not integration_client:
+        integration_client = GoogleIntegrationClient(
+            get_drive_client(),
+            get_gmail_client(),
+            get_calendar_client()
+        )
+    return integration_client
+
 # Authentication tools
 @mcp.tool()
 def google_auth_status() -> str:
@@ -99,13 +112,14 @@ def google_auth_status() -> str:
 def google_auth_revoke() -> str:
     """Revoke Google authentication and clear stored credentials"""
     try:
-        global drive_client, gmail_client, calendar_client
+        global drive_client, gmail_client, calendar_client, integration_client
         success = auth_manager.revoke_credentials()
         if success:
             # Clear cached clients
             drive_client = None
             gmail_client = None
             calendar_client = None
+            integration_client = None
             return "✅ Authentication revoked successfully"
         else:
             return "❌ Failed to revoke authentication"
@@ -114,14 +128,16 @@ def google_auth_revoke() -> str:
 
 # Google Drive tools
 @mcp.tool()
-def drive_list_files(query: str = "", folder_id: str = "", max_results: int = 10) -> str:
+def drive_list_files(query: str = "", folder_id: str = "", max_results: int = 10, drive_id: str = "", include_team_drives: bool = True) -> str:
     """List files in Google Drive"""
     try:
         client = get_drive_client()
         result = client.list_files(
             query=query if query else None,
             folder_id=folder_id if folder_id else None,
-            max_results=max_results
+            max_results=max_results,
+            drive_id=drive_id if drive_id else None,
+            include_team_drives=include_team_drives
         )
         return str(result)
     except Exception as e:
@@ -138,7 +154,7 @@ def drive_get_file(file_id: str, include_content: bool = False) -> str:
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def drive_upload_file(name: str, content: str, parent_folder_id: str = "", mime_type: str = "text/plain") -> str:
+def drive_upload_file(name: str, content: str, parent_folder_id: str = "", mime_type: str = "text/plain", drive_id: str = "") -> str:
     """Upload a file to Google Drive"""
     try:
         client = get_drive_client()
@@ -146,14 +162,15 @@ def drive_upload_file(name: str, content: str, parent_folder_id: str = "", mime_
             name=name,
             content=content,
             parent_folder_id=parent_folder_id if parent_folder_id else None,
-            mime_type=mime_type
+            mime_type=mime_type,
+            drive_id=drive_id if drive_id else None
         )
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def drive_create_file(name: str, content: str = "", parent_folder_id: str = "", mime_type: str = "text/plain") -> str:
+def drive_create_file(name: str, content: str = "", parent_folder_id: str = "", mime_type: str = "text/plain", drive_id: str = "") -> str:
     """Create a file in Google Drive"""
     try:
         client = get_drive_client()
@@ -161,7 +178,8 @@ def drive_create_file(name: str, content: str = "", parent_folder_id: str = "", 
             name=name,
             content=content,
             parent_folder_id=parent_folder_id if parent_folder_id else None,
-            mime_type=mime_type
+            mime_type=mime_type,
+            drive_id=drive_id if drive_id else None
         )
         return str(result)
     except Exception as e:
@@ -175,6 +193,84 @@ def drive_create_folder(name: str, parent_folder_id: str = "") -> str:
         result = client.create_folder(
             name=name,
             parent_folder_id=parent_folder_id if parent_folder_id else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_copy_file(file_id: str, name: str = "", parent_folder_id: str = "") -> str:
+    """Copy a file in Google Drive"""
+    try:
+        client = get_drive_client()
+        result = client.copy_file(
+            file_id=file_id,
+            name=name if name else None,
+            parent_folder_id=parent_folder_id if parent_folder_id else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_move_file(file_id: str, new_parent_folder_id: str, remove_from_current_parents: bool = True) -> str:
+    """Move a file to a different folder in Google Drive"""
+    try:
+        client = get_drive_client()
+        result = client.move_file(
+            file_id=file_id,
+            new_parent_folder_id=new_parent_folder_id,
+            remove_from_current_parents=remove_from_current_parents
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_rename_file(file_id: str, new_name: str) -> str:
+    """Rename a file in Google Drive"""
+    try:
+        client = get_drive_client()
+        result = client.rename_file(file_id=file_id, new_name=new_name)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_update_file_content(file_id: str, content: str, mime_type: str = "") -> str:
+    """Update the content of an existing file in Google Drive"""
+    try:
+        client = get_drive_client()
+        result = client.update_file_content(
+            file_id=file_id,
+            content=content,
+            mime_type=mime_type if mime_type else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_get_file_permissions(file_id: str) -> str:
+    """Get file sharing permissions"""
+    try:
+        client = get_drive_client()
+        result = client.get_file_permissions(file_id=file_id)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_share_file(file_id: str, email_address: str, role: str = "reader", send_notification: bool = True, message: str = "") -> str:
+    """Share a file with a user"""
+    try:
+        client = get_drive_client()
+        result = client.share_file(
+            file_id=file_id,
+            email_address=email_address,
+            role=role,
+            send_notification=send_notification,
+            message=message if message else ""
         )
         return str(result)
     except Exception as e:
@@ -217,6 +313,119 @@ def gmail_send_message(to: str, subject: str, body: str, cc: str = "", bcc: str 
             cc=cc if cc else None,
             bcc=bcc if bcc else None
         )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_reply_to_message(message_id: str, body: str, include_original: bool = True) -> str:
+    """Reply to a Gmail message"""
+    try:
+        client = get_gmail_client()
+        result = client.reply_to_message(
+            message_id=message_id,
+            body=body,
+            include_original=include_original
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_forward_message(message_id: str, to: str, body: str = "") -> str:
+    """Forward a Gmail message"""
+    try:
+        client = get_gmail_client()
+        result = client.forward_message(
+            message_id=message_id,
+            to=to,
+            body=body
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_send_html_message(to: str, subject: str, html_body: str, text_body: str = "", cc: str = "", bcc: str = "") -> str:
+    """Send an HTML Gmail message"""
+    try:
+        client = get_gmail_client()
+        result = client.send_html_message(
+            to=to,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body if text_body else "",
+            cc=cc if cc else None,
+            bcc=bcc if bcc else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_archive_message(message_id: str) -> str:
+    """Archive a Gmail message"""
+    try:
+        client = get_gmail_client()
+        result = client.archive_message(message_id=message_id)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_delete_message(message_id: str) -> str:
+    """Delete a Gmail message (move to trash)"""
+    try:
+        client = get_gmail_client()
+        result = client.delete_message(message_id=message_id)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_add_label(message_id: str, label_ids: str) -> str:
+    """Add labels to a Gmail message (comma-separated label IDs)"""
+    try:
+        client = get_gmail_client()
+        label_list = [label.strip() for label in label_ids.split(',') if label.strip()]
+        result = client.add_label(message_id=message_id, label_ids=label_list)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_remove_label(message_id: str, label_ids: str) -> str:
+    """Remove labels from a Gmail message (comma-separated label IDs)"""
+    try:
+        client = get_gmail_client()
+        label_list = [label.strip() for label in label_ids.split(',') if label.strip()]
+        result = client.remove_label(message_id=message_id, label_ids=label_list)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_create_draft(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
+    """Create a Gmail draft"""
+    try:
+        client = get_gmail_client()
+        result = client.create_draft(
+            to=to,
+            subject=subject,
+            body=body,
+            cc=cc if cc else None,
+            bcc=bcc if bcc else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def gmail_list_drafts(max_results: int = 10) -> str:
+    """List Gmail drafts"""
+    try:
+        client = get_gmail_client()
+        result = client.list_drafts(max_results=max_results)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"
@@ -268,6 +477,169 @@ def calendar_create_event(
             end_time=end_time,
             location=location if location else None,
             attendees=attendees if attendees else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_search_events(query: str, calendar_id: str = "primary", time_min: str = "", time_max: str = "", max_results: int = 10) -> str:
+    """Search events by text content"""
+    try:
+        client = get_calendar_client()
+        result = client.search_events(
+            query=query,
+            calendar_id=calendar_id,
+            time_min=time_min if time_min else None,
+            time_max=time_max if time_max else None,
+            max_results=max_results
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_duplicate_event(calendar_id: str, event_id: str, new_start_time: str, new_end_time: str, new_summary: str = "") -> str:
+    """Duplicate an event to a new date/time"""
+    try:
+        client = get_calendar_client()
+        result = client.duplicate_event(
+            calendar_id=calendar_id,
+            event_id=event_id,
+            new_start_time=new_start_time,
+            new_end_time=new_end_time,
+            new_summary=new_summary if new_summary else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_respond_to_event(calendar_id: str, event_id: str, response: str) -> str:
+    """Respond to an event invitation (accepted, declined, tentative)"""
+    try:
+        client = get_calendar_client()
+        result = client.respond_to_event(
+            calendar_id=calendar_id,
+            event_id=event_id,
+            response=response
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_get_free_busy_info(calendar_ids: str, time_min: str, time_max: str) -> str:
+    """Check free/busy information for calendars (comma-separated calendar IDs)"""
+    try:
+        client = get_calendar_client()
+        calendar_list = [cal_id.strip() for cal_id in calendar_ids.split(',') if cal_id.strip()]
+        result = client.get_free_busy_info(
+            calendar_ids=calendar_list,
+            time_min=time_min,
+            time_max=time_max
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_create_calendar(summary: str, description: str = "", time_zone: str = "UTC") -> str:
+    """Create a new calendar"""
+    try:
+        client = get_calendar_client()
+        result = client.create_calendar(
+            summary=summary,
+            description=description,
+            time_zone=time_zone
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_delete_calendar(calendar_id: str) -> str:
+    """Delete a calendar"""
+    try:
+        client = get_calendar_client()
+        result = client.delete_calendar(calendar_id=calendar_id)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def calendar_set_event_reminders(calendar_id: str, event_id: str, reminders: str) -> str:
+    """Set reminders for an event (JSON format: [{"method": "email", "minutes": 30}])"""
+    try:
+        import json
+        client = get_calendar_client()
+        reminder_list = json.loads(reminders)
+        result = client.set_event_reminders(
+            calendar_id=calendar_id,
+            event_id=event_id,
+            reminders=reminder_list
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Integration tools
+@mcp.tool()
+def create_meeting_from_email(message_id: str, proposed_time: str = "", duration_minutes: int = 60, calendar_id: str = "primary") -> str:
+    """Parse an email and create a calendar event from it"""
+    try:
+        client = get_integration_client()
+        result = client.create_meeting_from_email(
+            message_id=message_id,
+            proposed_time=proposed_time if proposed_time else "",
+            duration_minutes=duration_minutes,
+            calendar_id=calendar_id
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def save_email_to_drive(message_id: str, folder_id: str = "", file_format: str = "txt") -> str:
+    """Save an email as a file in Google Drive"""
+    try:
+        client = get_integration_client()
+        result = client.save_email_to_drive(
+            message_id=message_id,
+            folder_id=folder_id if folder_id else None,
+            file_format=file_format
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def share_drive_file_via_email(file_id: str, recipient_email: str, message: str = "", subject: str = "", permission_role: str = "reader") -> str:
+    """Share a Drive file and send email notification"""
+    try:
+        client = get_integration_client()
+        result = client.share_drive_file_via_email(
+            file_id=file_id,
+            recipient_email=recipient_email,
+            message=message,
+            subject=subject if subject else "",
+            permission_role=permission_role
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def unified_search(query: str, search_drive: bool = True, search_gmail: bool = True, search_calendar: bool = True, max_results: int = 5) -> str:
+    """Search across Gmail, Drive, and Calendar with a single query"""
+    try:
+        client = get_integration_client()
+        result = client.unified_search(
+            query=query,
+            search_drive=search_drive,
+            search_gmail=search_gmail,
+            search_calendar=search_calendar,
+            max_results=max_results
         )
         return str(result)
     except Exception as e:

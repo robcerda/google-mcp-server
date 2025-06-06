@@ -28,7 +28,9 @@ class GoogleDriveClient:
         
     def list_files(self, query: Optional[str] = None, 
                    folder_id: Optional[str] = None,
-                   max_results: int = 10) -> Dict[str, Any]:
+                   max_results: int = 10,
+                   drive_id: Optional[str] = None,
+                   include_team_drives: bool = True) -> Dict[str, Any]:
         """
         List files in Google Drive.
         
@@ -36,6 +38,8 @@ class GoogleDriveClient:
             query: Search query string
             folder_id: ID of folder to search in
             max_results: Maximum number of results to return
+            drive_id: Shared drive ID to search in (optional)
+            include_team_drives: Include shared drives in search
             
         Returns:
             Dictionary containing file list and metadata
@@ -53,12 +57,20 @@ class GoogleDriveClient:
             
             search_query = " and ".join(query_parts) if query_parts else "trashed = false"
             
-            # Execute search
-            results = self.service.files().list(
-                q=search_query,
-                pageSize=max_results,
-                fields="nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, parents, webViewLink)"
-            ).execute()
+            # Execute search with shared drive support
+            request_params = {
+                'q': search_query,
+                'pageSize': max_results,
+                'fields': "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, parents, webViewLink, driveId)",
+                'includeItemsFromAllDrives': include_team_drives,
+                'supportsAllDrives': True
+            }
+            
+            if drive_id:
+                request_params['driveId'] = drive_id
+                request_params['corpora'] = 'drive'
+            
+            results = self.service.files().list(**request_params).execute()
             
             files = results.get('files', [])
             
@@ -73,7 +85,9 @@ class GoogleDriveClient:
                     'createdTime': file['createdTime'],
                     'modifiedTime': file['modifiedTime'],
                     'webViewLink': file.get('webViewLink', ''),
-                    'isFolder': file['mimeType'] == 'application/vnd.google-apps.folder'
+                    'driveId': file.get('driveId', ''),
+                    'isFolder': file['mimeType'] == 'application/vnd.google-apps.folder',
+                    'isInSharedDrive': bool(file.get('driveId'))
                 }
                 formatted_files.append(formatted_file)
             
@@ -204,7 +218,8 @@ class GoogleDriveClient:
     
     def upload_file(self, name: str, content: str, 
                     parent_folder_id: Optional[str] = None,
-                    mime_type: str = "text/plain") -> Dict[str, Any]:
+                    mime_type: str = "text/plain",
+                    drive_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Upload a file to Google Drive.
         
@@ -213,6 +228,7 @@ class GoogleDriveClient:
             content: File content
             parent_folder_id: Parent folder ID (optional)
             mime_type: MIME type
+            drive_id: Shared drive ID (optional)
             
         Returns:
             Dictionary containing upload result
@@ -231,12 +247,15 @@ class GoogleDriveClient:
                 resumable=True
             )
             
-            # Upload file
-            file = self.service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, name, webViewLink'
-            ).execute()
+            # Upload file with shared drive support
+            request_params = {
+                'body': file_metadata,
+                'media_body': media,
+                'fields': 'id, name, webViewLink',
+                'supportsAllDrives': True
+            }
+            
+            file = self.service.files().create(**request_params).execute()
             
             return {
                 'success': True,
@@ -263,7 +282,8 @@ class GoogleDriveClient:
     
     def create_file(self, name: str, content: str = "", 
                     parent_folder_id: Optional[str] = None,
-                    mime_type: str = "text/plain") -> Dict[str, Any]:
+                    mime_type: str = "text/plain",
+                    drive_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a new file in Google Drive.
         
@@ -272,11 +292,12 @@ class GoogleDriveClient:
             content: File content (default: empty string)
             parent_folder_id: Parent folder ID (optional)
             mime_type: MIME type (default: text/plain)
+            drive_id: Shared drive ID (optional)
             
         Returns:
             Dictionary containing file creation result
         """
-        return self.upload_file(name, content, parent_folder_id, mime_type)
+        return self.upload_file(name, content, parent_folder_id, mime_type, drive_id)
     
     def create_folder(self, name: str, 
                       parent_folder_id: Optional[str] = None) -> Dict[str, Any]:
@@ -373,6 +394,332 @@ class GoogleDriveClient:
             }
         except Exception as e:
             logger.error(f"Error deleting file: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def copy_file(self, file_id: str, name: Optional[str] = None,
+                  parent_folder_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Copy a file in Google Drive.
+        
+        Args:
+            file_id: Google Drive file ID to copy
+            name: New file name (optional, defaults to "Copy of [original name]")
+            parent_folder_id: Parent folder ID for the copy (optional)
+            
+        Returns:
+            Dictionary containing copy result
+        """
+        try:
+            # Get original file metadata if name not provided
+            if not name:
+                original_file = self.service.files().get(
+                    fileId=file_id, 
+                    fields='name',
+                    supportsAllDrives=True
+                ).execute()
+                name = f"Copy of {original_file['name']}"
+            
+            # Prepare copy metadata
+            copy_metadata = {'name': name}
+            if parent_folder_id:
+                copy_metadata['parents'] = [parent_folder_id]
+            
+            # Copy file
+            copied_file = self.service.files().copy(
+                fileId=file_id,
+                body=copy_metadata,
+                fields='id, name, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+            
+            return {
+                'success': True,
+                'file': {
+                    'id': copied_file['id'],
+                    'name': copied_file['name'],
+                    'webViewLink': copied_file.get('webViewLink', '')
+                },
+                'message': f"File copied successfully as '{name}'"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error copying file: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error copying file: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def move_file(self, file_id: str, new_parent_folder_id: str,
+                  remove_from_current_parents: bool = True) -> Dict[str, Any]:
+        """
+        Move a file to a different folder in Google Drive.
+        
+        Args:
+            file_id: Google Drive file ID to move
+            new_parent_folder_id: New parent folder ID
+            remove_from_current_parents: Remove from current parents (default: True)
+            
+        Returns:
+            Dictionary containing move result
+        """
+        try:
+            # Get current parents if we need to remove them
+            previous_parents = ""
+            if remove_from_current_parents:
+                file = self.service.files().get(
+                    fileId=file_id,
+                    fields='parents',
+                    supportsAllDrives=True
+                ).execute()
+                previous_parents = ",".join(file.get('parents', []))
+            
+            # Move file
+            moved_file = self.service.files().update(
+                fileId=file_id,
+                addParents=new_parent_folder_id,
+                removeParents=previous_parents,
+                fields='id, name, parents',
+                supportsAllDrives=True
+            ).execute()
+            
+            return {
+                'success': True,
+                'file': {
+                    'id': moved_file['id'],
+                    'name': moved_file['name'],
+                    'parents': moved_file.get('parents', [])
+                },
+                'message': f"File '{moved_file['name']}' moved successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error moving file: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error moving file: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def rename_file(self, file_id: str, new_name: str) -> Dict[str, Any]:
+        """
+        Rename a file in Google Drive.
+        
+        Args:
+            file_id: Google Drive file ID to rename
+            new_name: New file name
+            
+        Returns:
+            Dictionary containing rename result
+        """
+        try:
+            # Update file name
+            updated_file = self.service.files().update(
+                fileId=file_id,
+                body={'name': new_name},
+                fields='id, name, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+            
+            return {
+                'success': True,
+                'file': {
+                    'id': updated_file['id'],
+                    'name': updated_file['name'],
+                    'webViewLink': updated_file.get('webViewLink', '')
+                },
+                'message': f"File renamed to '{new_name}' successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error renaming file: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error renaming file: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def update_file_content(self, file_id: str, content: str,
+                           mime_type: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Update the content of an existing file in Google Drive.
+        
+        Args:
+            file_id: Google Drive file ID to update
+            content: New file content
+            mime_type: MIME type (optional, will be detected if not provided)
+            
+        Returns:
+            Dictionary containing update result
+        """
+        try:
+            # Get current file metadata if mime_type not provided
+            if not mime_type:
+                file_metadata = self.service.files().get(
+                    fileId=file_id,
+                    fields='mimeType',
+                    supportsAllDrives=True
+                ).execute()
+                mime_type = file_metadata['mimeType']
+            
+            # Create media upload
+            content_bytes = content.encode('utf-8')
+            media = MediaIoBaseUpload(
+                BytesIO(content_bytes),
+                mimetype=mime_type,
+                resumable=True
+            )
+            
+            # Update file
+            updated_file = self.service.files().update(
+                fileId=file_id,
+                media_body=media,
+                fields='id, name, modifiedTime',
+                supportsAllDrives=True
+            ).execute()
+            
+            return {
+                'success': True,
+                'file': {
+                    'id': updated_file['id'],
+                    'name': updated_file['name'],
+                    'modifiedTime': updated_file['modifiedTime']
+                },
+                'message': f"File '{updated_file['name']}' content updated successfully"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error updating file content: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error updating file content: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_file_permissions(self, file_id: str) -> Dict[str, Any]:
+        """
+        Get file sharing permissions.
+        
+        Args:
+            file_id: Google Drive file ID
+            
+        Returns:
+            Dictionary containing permissions information
+        """
+        try:
+            # Get file permissions
+            permissions = self.service.permissions().list(
+                fileId=file_id,
+                fields='permissions(id, type, role, emailAddress, displayName)',
+                supportsAllDrives=True
+            ).execute()
+            
+            # Format permissions
+            formatted_permissions = []
+            for perm in permissions.get('permissions', []):
+                formatted_perm = {
+                    'id': perm['id'],
+                    'type': perm['type'],
+                    'role': perm['role'],
+                    'emailAddress': perm.get('emailAddress', ''),
+                    'displayName': perm.get('displayName', '')
+                }
+                formatted_permissions.append(formatted_perm)
+            
+            return {
+                'success': True,
+                'permissions': formatted_permissions,
+                'totalPermissions': len(formatted_permissions)
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error getting file permissions: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error getting file permissions: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def share_file(self, file_id: str, email_address: str, role: str = "reader",
+                   send_notification: bool = True, message: str = "") -> Dict[str, Any]:
+        """
+        Share a file with a user (limited by drive.file scope).
+        
+        Args:
+            file_id: Google Drive file ID to share
+            email_address: Email address to share with
+            role: Permission role (reader, writer, commenter)
+            send_notification: Send email notification
+            message: Optional message to include
+            
+        Returns:
+            Dictionary containing share result
+        """
+        try:
+            # Create permission
+            permission = {
+                'type': 'user',
+                'role': role,
+                'emailAddress': email_address
+            }
+            
+            # Share file
+            created_permission = self.service.permissions().create(
+                fileId=file_id,
+                body=permission,
+                sendNotificationEmail=send_notification,
+                emailMessage=message if message else None,
+                fields='id, type, role, emailAddress',
+                supportsAllDrives=True
+            ).execute()
+            
+            return {
+                'success': True,
+                'permission': {
+                    'id': created_permission['id'],
+                    'type': created_permission['type'],
+                    'role': created_permission['role'],
+                    'emailAddress': created_permission['emailAddress']
+                },
+                'message': f"File shared with {email_address} as {role}"
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error sharing file: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error sharing file: {e}")
             return {
                 'success': False,
                 'error': str(e)

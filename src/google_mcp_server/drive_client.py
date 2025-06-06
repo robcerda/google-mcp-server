@@ -26,6 +26,27 @@ class GoogleDriveClient:
         self.credentials = credentials
         self.service = build('drive', 'v3', credentials=credentials)
         
+    def _is_google_native_format(self, mime_type: str) -> bool:
+        """Check if the MIME type is a Google native format."""
+        google_native_types = {
+            'application/vnd.google-apps.document',
+            'application/vnd.google-apps.spreadsheet', 
+            'application/vnd.google-apps.presentation',
+            'application/vnd.google-apps.drawing',
+            'application/vnd.google-apps.form',
+            'application/vnd.google-apps.site'
+        }
+        return mime_type in google_native_types
+    
+    def _get_convertible_mime_type(self, target_google_type: str) -> str:
+        """Get the convertible MIME type for a Google native format."""
+        conversion_map = {
+            'application/vnd.google-apps.document': 'text/html',
+            'application/vnd.google-apps.spreadsheet': 'text/csv',
+            'application/vnd.google-apps.presentation': 'text/html'
+        }
+        return conversion_map.get(target_google_type, 'text/plain')
+        
     def list_files(self, query: Optional[str] = None, 
                    folder_id: Optional[str] = None,
                    max_results: int = 10,
@@ -219,7 +240,8 @@ class GoogleDriveClient:
     def upload_file(self, name: str, content: str, 
                     parent_folder_id: Optional[str] = None,
                     mime_type: str = "text/plain",
-                    drive_id: Optional[str] = None) -> Dict[str, Any]:
+                    drive_id: Optional[str] = None,
+                    convert_to_google_format: bool = False) -> Dict[str, Any]:
         """
         Upload a file to Google Drive.
         
@@ -229,6 +251,7 @@ class GoogleDriveClient:
             parent_folder_id: Parent folder ID (optional)
             mime_type: MIME type
             drive_id: Shared drive ID (optional)
+            convert_to_google_format: Convert to Google format (Docs/Sheets/Slides)
             
         Returns:
             Dictionary containing upload result
@@ -236,24 +259,71 @@ class GoogleDriveClient:
         try:
             # Prepare file metadata
             file_metadata = {'name': name}
-            if parent_folder_id:
-                file_metadata['parents'] = [parent_folder_id]
             
-            # Create media upload
-            content_bytes = content.encode('utf-8')
-            media = MediaIoBaseUpload(
-                BytesIO(content_bytes),
-                mimetype=mime_type,
-                resumable=True
-            )
+            # Handle shared drive vs personal drive logic
+            if drive_id:
+                # For shared drives, we need to handle parents differently
+                if parent_folder_id:
+                    # Use the specified folder within the shared drive
+                    file_metadata['parents'] = [parent_folder_id]
+                else:
+                    # Use the shared drive root - need to get the drive's root folder
+                    try:
+                        drive_info = self.service.drives().get(driveId=drive_id).execute()
+                        # For shared drives, the drive ID is also the root folder ID
+                        file_metadata['parents'] = [drive_id]
+                    except HttpError:
+                        # Fallback: try using drive_id directly as parent
+                        file_metadata['parents'] = [drive_id]
+            else:
+                # Personal drive logic
+                if parent_folder_id:
+                    file_metadata['parents'] = [parent_folder_id]
+                # If no parent_folder_id, file goes to root (no parents needed)
             
-            # Upload file with shared drive support
+            # Check if this is a Google native format
+            is_google_native = self._is_google_native_format(mime_type)
+            
+            # Prepare request parameters
             request_params = {
                 'body': file_metadata,
-                'media_body': media,
-                'fields': 'id, name, webViewLink',
+                'fields': 'id, name, webViewLink, driveId',
                 'supportsAllDrives': True
             }
+            
+            if drive_id:
+                request_params['supportsTeamDrives'] = True  # Legacy parameter for compatibility
+            
+            if is_google_native:
+                # For Google native formats, create metadata-only file
+                if content.strip():
+                    # If content is provided, we need to upload in a convertible format
+                    # and let Google convert it
+                    convertible_mime = self._get_convertible_mime_type(mime_type)
+                    content_bytes = content.encode('utf-8')
+                    media = MediaIoBaseUpload(
+                        BytesIO(content_bytes),
+                        mimetype=convertible_mime,
+                        resumable=True
+                    )
+                    request_params['media_body'] = media
+                    
+                    # Set the target Google format in metadata
+                    file_metadata['mimeType'] = mime_type
+                else:
+                    # Create empty Google native file (metadata only)
+                    file_metadata['mimeType'] = mime_type
+                    # No media_body for empty Google native files
+            else:
+                # Regular file upload with content
+                if content:
+                    content_bytes = content.encode('utf-8')
+                    media = MediaIoBaseUpload(
+                        BytesIO(content_bytes),
+                        mimetype=mime_type,
+                        resumable=True
+                    )
+                    request_params['media_body'] = media
             
             file = self.service.files().create(**request_params).execute()
             
@@ -300,13 +370,15 @@ class GoogleDriveClient:
         return self.upload_file(name, content, parent_folder_id, mime_type, drive_id)
     
     def create_folder(self, name: str, 
-                      parent_folder_id: Optional[str] = None) -> Dict[str, Any]:
+                      parent_folder_id: Optional[str] = None,
+                      drive_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a folder in Google Drive.
         
         Args:
             name: Folder name
             parent_folder_id: Parent folder ID (optional)
+            drive_id: Shared drive ID (optional)
             
         Returns:
             Dictionary containing folder creation result
@@ -317,14 +389,40 @@ class GoogleDriveClient:
                 'name': name,
                 'mimeType': 'application/vnd.google-apps.folder'
             }
-            if parent_folder_id:
-                file_metadata['parents'] = [parent_folder_id]
             
-            # Create folder
-            folder = self.service.files().create(
-                body=file_metadata,
-                fields='id, name, webViewLink'
-            ).execute()
+            # Handle shared drive vs personal drive logic
+            if drive_id:
+                # For shared drives, we need to handle parents differently
+                if parent_folder_id:
+                    # Use the specified folder within the shared drive
+                    file_metadata['parents'] = [parent_folder_id]
+                else:
+                    # Use the shared drive root
+                    try:
+                        drive_info = self.service.drives().get(driveId=drive_id).execute()
+                        # For shared drives, the drive ID is also the root folder ID
+                        file_metadata['parents'] = [drive_id]
+                    except HttpError:
+                        # Fallback: try using drive_id directly as parent
+                        file_metadata['parents'] = [drive_id]
+            else:
+                # Personal drive logic
+                if parent_folder_id:
+                    file_metadata['parents'] = [parent_folder_id]
+                # If no parent_folder_id, folder goes to root (no parents needed)
+            
+            # Create folder with shared drive support
+            request_params = {
+                'body': file_metadata,
+                'fields': 'id, name, webViewLink, driveId',
+                'supportsAllDrives': True
+            }
+            
+            # Add legacy parameter for compatibility
+            if drive_id:
+                request_params['supportsTeamDrives'] = True
+            
+            folder = self.service.files().create(**request_params).execute()
             
             return {
                 'success': True,
@@ -724,3 +822,123 @@ class GoogleDriveClient:
                 'success': False,
                 'error': str(e)
             }
+    
+    def list_shared_drives(self, max_results: int = 10) -> Dict[str, Any]:
+        """
+        List available shared drives.
+        
+        Args:
+            max_results: Maximum number of shared drives to return
+            
+        Returns:
+            Dictionary containing shared drives list
+        """
+        try:
+            # Get shared drives list
+            results = self.service.drives().list(
+                pageSize=max_results,
+                fields="nextPageToken, drives(id, name, createdTime, capabilities, restrictions)"
+            ).execute()
+            
+            drives = results.get('drives', [])
+            
+            # Format results
+            formatted_drives = []
+            for drive in drives:
+                formatted_drive = {
+                    'id': drive['id'],
+                    'name': drive['name'],
+                    'createdTime': drive.get('createdTime', ''),
+                    'capabilities': drive.get('capabilities', {}),
+                    'restrictions': drive.get('restrictions', {})
+                }
+                formatted_drives.append(formatted_drive)
+            
+            return {
+                'success': True,
+                'drives': formatted_drives,
+                'totalDrives': len(formatted_drives),
+                'hasMore': 'nextPageToken' in results
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error listing shared drives: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error listing shared drives: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def create_google_doc(self, name: str, content: str = "",
+                         parent_folder_id: Optional[str] = None,
+                         drive_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a Google Doc.
+        
+        Args:
+            name: Document name
+            content: Initial content (HTML or plain text)
+            parent_folder_id: Parent folder ID (optional)
+            drive_id: Shared drive ID (optional)
+            
+        Returns:
+            Dictionary containing document creation result
+        """
+        return self.upload_file(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id,
+            mime_type='application/vnd.google-apps.document',
+            drive_id=drive_id
+        )
+    
+    def create_google_sheet(self, name: str, content: str = "",
+                           parent_folder_id: Optional[str] = None,
+                           drive_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a Google Sheet.
+        
+        Args:
+            name: Spreadsheet name
+            content: Initial content (CSV format)
+            parent_folder_id: Parent folder ID (optional)
+            drive_id: Shared drive ID (optional)
+            
+        Returns:
+            Dictionary containing spreadsheet creation result
+        """
+        return self.upload_file(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id,
+            mime_type='application/vnd.google-apps.spreadsheet',
+            drive_id=drive_id
+        )
+    
+    def create_google_slide(self, name: str, content: str = "",
+                           parent_folder_id: Optional[str] = None,
+                           drive_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a Google Slides presentation.
+        
+        Args:
+            name: Presentation name
+            content: Initial content (HTML format)
+            parent_folder_id: Parent folder ID (optional)
+            drive_id: Shared drive ID (optional)
+            
+        Returns:
+            Dictionary containing presentation creation result
+        """
+        return self.upload_file(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id,
+            mime_type='application/vnd.google-apps.presentation',
+            drive_id=drive_id
+        )

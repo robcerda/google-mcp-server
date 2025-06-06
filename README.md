@@ -24,7 +24,7 @@ A Model Context Protocol (MCP) server that provides Claude with comprehensive ac
   - Unified search across all Google services
 - **🔑 Custom Scopes**: Configure additional OAuth2 scopes for extended functionality
 - **🏠 Local Credential Management**: Keep your API keys and tokens on your local machine
-- **🚀 37 Total Tools**: Most comprehensive Google MCP integration available
+- **🚀 41 Total Tools**: Most comprehensive Google MCP integration available
 
 ## Prerequisites
 
@@ -209,14 +209,14 @@ When you first use the server, it will automatically launch your browser for OAu
 
 Your credentials will be securely stored locally in `~/.config/google-mcp-server/token.json`.
 
-### Available Tools (37 Total)
+### Available Tools (41 Total)
 
 #### Authentication Tools
 
 - **google_auth_status**: Check current authentication status
 - **google_auth_revoke**: Revoke authentication and clear stored credentials
 
-#### Google Drive Tools (13 tools)
+#### Google Drive Tools (17 tools)
 
 **Basic Operations:**
 - **drive_list_files**: List files in Google Drive
@@ -247,6 +247,18 @@ Your credentials will be securely stored locally in `~/.config/google-mcp-server
   - Parameters: `file_id`, `email_address`, `role`, `send_notification`, `message`
 
 **🔗 Shared Drive Support**: All Drive functions support both personal and shared drives via `drive_id` parameter.
+
+**Shared Drive Operations:**
+- **drive_list_shared_drives**: List available shared drives to get drive IDs
+  - Parameters: `max_results`
+
+**Google Native Formats:**
+- **drive_create_google_doc**: Create Google Docs (supports HTML content)
+  - Parameters: `name`, `content`, `parent_folder_id`, `drive_id`
+- **drive_create_google_sheet**: Create Google Sheets (supports CSV content)
+  - Parameters: `name`, `content`, `parent_folder_id`, `drive_id`
+- **drive_create_google_slide**: Create Google Slides (supports HTML content)
+  - Parameters: `name`, `content`, `parent_folder_id`, `drive_id`
 
 #### Gmail Tools (12 tools)
 
@@ -333,6 +345,9 @@ Show me my recent files in Google Drive
 # Search for specific files in shared drives
 Find files in my shared drives containing "presentation"
 
+# List available shared drives
+Show me all my shared drives
+
 # Send an email
 Send an email to john@example.com with subject "Meeting Tomorrow" and body "Hi John, Don't forget about our meeting tomorrow at 2 PM. Best regards!"
 
@@ -353,6 +368,17 @@ Update the content of file [file_id] with new text content
 
 # Share a file with specific permissions
 Share file [file_id] with user@example.com as editor with notification
+
+# Create file in shared drive
+Create a file called "team-notes.txt" in shared drive [drive_id] with content "Team meeting notes"
+
+# Create folder in shared drive  
+Create a folder called "Project Files" in shared drive [drive_id]
+
+# Create Google Docs/Sheets/Slides
+Create a Google Doc called "Meeting Notes" with HTML content
+Create a Google Sheet called "Budget" with CSV data: Name,Amount\nItem1,100\nItem2,200
+Create a Google Slides presentation called "Project Overview"
 ```
 
 #### Email Workflow

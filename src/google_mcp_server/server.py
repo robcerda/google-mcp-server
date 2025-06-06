@@ -186,13 +186,14 @@ def drive_create_file(name: str, content: str = "", parent_folder_id: str = "", 
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def drive_create_folder(name: str, parent_folder_id: str = "") -> str:
+def drive_create_folder(name: str, parent_folder_id: str = "", drive_id: str = "") -> str:
     """Create a folder in Google Drive"""
     try:
         client = get_drive_client()
         result = client.create_folder(
             name=name,
-            parent_folder_id=parent_folder_id if parent_folder_id else None
+            parent_folder_id=parent_folder_id if parent_folder_id else None,
+            drive_id=drive_id if drive_id else None
         )
         return str(result)
     except Exception as e:
@@ -271,6 +272,61 @@ def drive_share_file(file_id: str, email_address: str, role: str = "reader", sen
             role=role,
             send_notification=send_notification,
             message=message if message else ""
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_list_shared_drives(max_results: int = 10) -> str:
+    """List available shared drives"""
+    try:
+        client = get_drive_client()
+        result = client.list_shared_drives(max_results=max_results)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_create_google_doc(name: str, content: str = "", parent_folder_id: str = "", drive_id: str = "") -> str:
+    """Create a Google Doc"""
+    try:
+        client = get_drive_client()
+        result = client.create_google_doc(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id if parent_folder_id else None,
+            drive_id=drive_id if drive_id else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_create_google_sheet(name: str, content: str = "", parent_folder_id: str = "", drive_id: str = "") -> str:
+    """Create a Google Sheet"""
+    try:
+        client = get_drive_client()
+        result = client.create_google_sheet(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id if parent_folder_id else None,
+            drive_id=drive_id if drive_id else None
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_create_google_slide(name: str, content: str = "", parent_folder_id: str = "", drive_id: str = "") -> str:
+    """Create a Google Slides presentation"""
+    try:
+        client = get_drive_client()
+        result = client.create_google_slide(
+            name=name,
+            content=content,
+            parent_folder_id=parent_folder_id if parent_folder_id else None,
+            drive_id=drive_id if drive_id else None
         )
         return str(result)
     except Exception as e:

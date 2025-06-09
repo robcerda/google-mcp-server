@@ -413,3 +413,180 @@ To cancel: cancel_operation()
                 'success': False,
                 'error': str(e)
             }
+    
+    def prepare_bulk_modify(self, query: str, add_labels: str = "", remove_labels: str = "", max_messages: int = 1000) -> Dict[str, Any]:
+        """
+        Prepare bulk email operations - shows what will be affected and requires confirmation.
+        
+        Args:
+            query: Gmail search query to select messages
+            add_labels: Comma-separated label IDs to add
+            remove_labels: Comma-separated label IDs to remove
+            max_messages: Maximum number of messages to process
+            
+        Returns:
+            Dictionary with operation details for user confirmation
+        """
+        try:
+            if not query.strip():
+                return {
+                    'success': False,
+                    'error': 'Query is required for bulk operations'
+                }
+                
+            # Parse labels
+            add_list = [label.strip() for label in add_labels.split(',') if label.strip()] if add_labels else []
+            remove_list = [label.strip() for label in remove_labels.split(',') if label.strip()] if remove_labels else []
+            
+            if not add_list and not remove_list:
+                return {
+                    'success': False,
+                    'error': 'At least one of add_labels or remove_labels must be specified'
+                }
+            
+            # Get count of messages that would be affected (but don't process them yet)
+            search_result = self.gmail.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=min(max_messages, 100)  # Get first 100 for preview
+            ).execute()
+            
+            messages = search_result.get('messages', [])
+            total_estimate = search_result.get('resultSizeEstimate', 0)
+            
+            if not messages:
+                return {
+                    'success': True,
+                    'message': f'No messages found matching query: "{query}"',
+                    'affected_count': 0
+                }
+            
+            # Get sample message details for preview
+            sample_messages = []
+            for i, msg in enumerate(messages[:5]):  # Show first 5 as preview
+                try:
+                    message_details = self.gmail.service.users().messages().get(
+                        userId='me',
+                        id=msg['id'],
+                        format='metadata',
+                        metadataHeaders=['From', 'Subject', 'Date']
+                    ).execute()
+                    
+                    headers = {h['name']: h['value'] for h in message_details['payload'].get('headers', [])}
+                    sample_messages.append({
+                        'from': headers.get('From', 'Unknown'),
+                        'subject': headers.get('Subject', 'No Subject'),
+                        'date': headers.get('Date', 'Unknown'),
+                        'snippet': message_details.get('snippet', '')[:100] + '...'
+                    })
+                except Exception:
+                    continue
+            
+            # Create operation description
+            operations_desc = []
+            if add_list:
+                operations_desc.append(f"ADD labels: {', '.join(add_list)}")
+            if remove_list:
+                operations_desc.append(f"REMOVE labels: {', '.join(remove_list)}")
+            
+            operation_summary = " and ".join(operations_desc)
+            
+            # Create confirmation command
+            confirm_command = f"confirm_bulk_modify('{query}'"
+            if add_labels:
+                confirm_command += f", add_labels='{add_labels}'"
+            if remove_labels:
+                confirm_command += f", remove_labels='{remove_labels}'"
+            if max_messages != 1000:
+                confirm_command += f", max_messages={max_messages}"
+            confirm_command += ")"
+            
+            # Calculate if this will hit all messages or be limited
+            will_be_limited = total_estimate > max_messages
+            actual_count = min(total_estimate, max_messages)
+            
+            bulk_preview = {
+                'action': 'BULK_MODIFY_EMAILS',
+                'query': query,
+                'total_found': total_estimate,
+                'will_process': actual_count,
+                'limited': will_be_limited,
+                'operations': {
+                    'add_labels': add_list,
+                    'remove_labels': remove_list
+                },
+                'sample_messages': sample_messages
+            }
+            
+            return {
+                'success': True,
+                'requires_confirmation': True,
+                'preview': bulk_preview,
+                'message': f"""
+⚠️  BULK EMAIL OPERATION - CONFIRMATION REQUIRED
+
+Query: "{query}"
+Found: {total_estimate} messages
+Will process: {actual_count} messages{'(limited by max_messages)' if will_be_limited else ''}
+
+Operations: {operation_summary}
+
+Sample messages that will be affected:
+{chr(10).join([f"  • {msg['from']}: {msg['subject']}" for msg in sample_messages[:3]])}
+{f"  ... and {len(sample_messages) - 3} more shown in preview" if len(sample_messages) > 3 else ""}
+{f"  ... and {actual_count - len(sample_messages)} more will be processed" if actual_count > len(sample_messages) else ""}
+
+🚨 This operation will modify {actual_count} emails immediately upon confirmation.
+   This action cannot be easily undone for large numbers of messages.
+
+To proceed: {confirm_command}
+To cancel: cancel_operation()
+""",
+                'confirmation_params': {
+                    'query': query,
+                    'add_labels': add_labels,
+                    'remove_labels': remove_labels,
+                    'max_messages': max_messages
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error preparing bulk modify: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def confirm_bulk_modify(self, confirmation_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Actually execute the bulk email operation after confirmation.
+        """
+        try:
+            # Parse labels for bulk_modify call
+            add_list = [label.strip() for label in confirmation_data.get('add_labels', '').split(',') if label.strip()] if confirmation_data.get('add_labels') else None
+            remove_list = [label.strip() for label in confirmation_data.get('remove_labels', '').split(',') if label.strip()] if confirmation_data.get('remove_labels') else None
+            
+            result = self.gmail.bulk_modify(
+                query=confirmation_data['query'],
+                add_labels=add_list,
+                remove_labels=remove_list,
+                max_messages=confirmation_data.get('max_messages', 1000)
+            )
+            
+            if result['success']:
+                operations = []
+                if add_list:
+                    operations.append(f"added labels {add_list}")
+                if remove_list:
+                    operations.append(f"removed labels {remove_list}")
+                operation_desc = " and ".join(operations)
+                
+                result['message'] = f"✅ Bulk operation completed: {operation_desc} for {result.get('processed', 0)} messages"
+            
+            return result
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }

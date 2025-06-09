@@ -526,6 +526,40 @@ def gmail_list_drafts(max_results: int = 10) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
+# Gmail bulk operations (efficient for large datasets)
+@mcp.tool()
+def gmail_bulk_modify(query: str, add_labels: str = "", remove_labels: str = "", max_messages: int = 1000) -> str:
+    """⚠️ UNSAFE: Universal bulk modify messages (executes immediately without confirmation)
+    
+    ⚠️ DANGER: This modifies emails immediately without showing what will be affected!
+    For safety, use prepare_bulk_modify() instead to see a preview first.
+    
+    Examples:
+    - Mark all unread as read: gmail_bulk_modify("is:unread", remove_labels="UNREAD")
+    - Archive notifications: gmail_bulk_modify("from:notifications", remove_labels="INBOX") 
+    - Label CEO emails as important: gmail_bulk_modify("from:ceo@company.com", add_labels="IMPORTANT")
+    - Mark inbox as unread: gmail_bulk_modify("in:inbox -is:unread", add_labels="UNREAD")
+    - Complex operation: gmail_bulk_modify("older_than:30d", add_labels="OLD", remove_labels="INBOX,UNREAD")
+    
+    ✅ SAFER ALTERNATIVE: Use prepare_bulk_modify() to see preview and confirm before executing.
+    """
+    try:
+        client = get_gmail_client()
+        
+        # Parse comma-separated labels
+        add_list = [label.strip() for label in add_labels.split(',') if label.strip()] if add_labels else None
+        remove_list = [label.strip() for label in remove_labels.split(',') if label.strip()] if remove_labels else None
+        
+        result = client.bulk_modify(
+            query=query,
+            add_labels=add_list,
+            remove_labels=remove_list,
+            max_messages=max_messages
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
 # Google Calendar tools
 @mcp.tool()
 def calendar_list_calendars() -> str:
@@ -1020,8 +1054,48 @@ def confirm_create_event(summary: str, start_time: str, end_time: str, attendees
         return f"Error: {str(e)}"
 
 @mcp.tool()
+def prepare_bulk_modify(query: str, add_labels: str = "", remove_labels: str = "", max_messages: int = 1000) -> str:
+    """✅ SAFE: Prepare bulk email operations - shows preview and requires confirmation
+    
+    Shows exactly which emails will be affected before making any changes.
+    Much safer than direct bulk operations for large datasets.
+    
+    Examples:
+    - Mark all unread as read: prepare_bulk_modify("is:unread", remove_labels="UNREAD")
+    - Archive notifications: prepare_bulk_modify("from:notifications", remove_labels="INBOX")
+    - Label CEO emails: prepare_bulk_modify("from:ceo@company.com", add_labels="IMPORTANT")
+    """
+    try:
+        tools = get_safe_tools()
+        result = tools.prepare_bulk_modify(
+            query=query,
+            add_labels=add_labels,
+            remove_labels=remove_labels,
+            max_messages=max_messages
+        )
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def confirm_bulk_modify(query: str, add_labels: str = "", remove_labels: str = "", max_messages: int = 1000) -> str:
+    """✅ Confirm and execute the prepared bulk email operation"""
+    try:
+        confirmation_data = {
+            'query': query,
+            'add_labels': add_labels,
+            'remove_labels': remove_labels,
+            'max_messages': max_messages
+        }
+        tools = get_safe_tools()
+        result = tools.confirm_bulk_modify(confirmation_data)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
 def cancel_operation() -> str:
-    """❌ Cancel any pending operation (email, file share, calendar event)"""
+    """❌ Cancel any pending operation (email, file share, calendar event, bulk operation)"""
     return "✅ Operation cancelled. No action was taken."
 
 # Export for mcp run

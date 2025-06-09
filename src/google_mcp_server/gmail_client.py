@@ -857,3 +857,123 @@ class GmailClient:
                 'success': False,
                 'error': str(e)
             }
+    
+    def bulk_modify(self, query: str, add_labels: List[str] = None, remove_labels: List[str] = None, max_messages: int = 1000) -> Dict[str, Any]:
+        """
+        Universal bulk modify messages using query-based selection and batch operations.
+        
+        Args:
+            query: Gmail search query to select messages
+            add_labels: List of label IDs to add (optional)
+            remove_labels: List of label IDs to remove (optional) 
+            max_messages: Maximum number of messages to process
+            
+        Returns:
+            Dictionary containing bulk operation result
+            
+        Examples:
+            # Mark all unread as read
+            bulk_modify("is:unread", remove_labels=["UNREAD"])
+            
+            # Archive all emails from notifications
+            bulk_modify("from:notifications", remove_labels=["INBOX"])
+            
+            # Add important label to CEO emails
+            bulk_modify("from:ceo@company.com", add_labels=["IMPORTANT"])
+            
+            # Mark inbox emails as unread
+            bulk_modify("in:inbox -is:unread", add_labels=["UNREAD"])
+        """
+        try:
+            if not query.strip():
+                return {
+                    'success': False,
+                    'error': 'Query is required for bulk operations'
+                }
+                
+            if not add_labels and not remove_labels:
+                return {
+                    'success': False,
+                    'error': 'At least one of add_labels or remove_labels must be specified'
+                }
+            
+            # Get message IDs matching the query
+            search_result = self.service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=max_messages
+            ).execute()
+            
+            message_ids = [msg['id'] for msg in search_result.get('messages', [])]
+            
+            if not message_ids:
+                return {
+                    'success': True,
+                    'message': 'No messages found matching the query',
+                    'query': query,
+                    'processed': 0
+                }
+            
+            # Process in batches of 100 (Gmail API limit)
+            batch_size = 100
+            total_processed = 0
+            batch_results = []
+            
+            for i in range(0, len(message_ids), batch_size):
+                batch_ids = message_ids[i:i + batch_size]
+                
+                # Build batch request
+                batch_request = {'ids': batch_ids}
+                
+                if add_labels:
+                    batch_request['addLabelIds'] = add_labels
+                if remove_labels:
+                    batch_request['removeLabelIds'] = remove_labels
+                
+                # Execute batch modification
+                self.service.users().messages().batchModify(
+                    userId='me',
+                    body=batch_request
+                ).execute()
+                
+                total_processed += len(batch_ids)
+                batch_results.append({
+                    'batch': i // batch_size + 1,
+                    'processed': len(batch_ids)
+                })
+                
+                logger.info(f"Processed batch {len(batch_results)}: {len(batch_ids)} messages")
+            
+            # Create descriptive message
+            operations = []
+            if add_labels:
+                operations.append(f"added labels {add_labels}")
+            if remove_labels:
+                operations.append(f"removed labels {remove_labels}")
+            operation_desc = " and ".join(operations)
+            
+            return {
+                'success': True,
+                'message': f'Successfully {operation_desc} for {total_processed} messages',
+                'query': query,
+                'total_found': len(message_ids),
+                'processed': total_processed,
+                'batches': batch_results,
+                'operations': {
+                    'added_labels': add_labels or [],
+                    'removed_labels': remove_labels or []
+                }
+            }
+            
+        except HttpError as e:
+            logger.error(f"HTTP error in bulk modify: {e}")
+            return {
+                'success': False,
+                'error': f"HTTP error: {e.resp.status} - {e.content.decode()}"
+            }
+        except Exception as e:
+            logger.error(f"Error in bulk modify: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }

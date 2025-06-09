@@ -6,9 +6,10 @@ Run this to test the People API integration.
 
 import sys
 import os
+from pathlib import Path
 
 # Add src to path so we can import the modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from google_mcp_server.contacts_client import GoogleContactsClient
 

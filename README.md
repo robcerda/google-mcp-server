@@ -61,13 +61,31 @@ Create a meeting tomorrow 2-3pm with Spencer, John, and Sarah
 
 ## 🔐 Security & Scopes
 
-**Default Scopes** (Advanced Protection compatible):
-- `drive.file` - Access only files created by this app
-- `gmail.send` + `gmail.readonly` - Send emails and read (no modify)
-- `contacts.readonly` - Read contacts for name resolution
-- `calendar` - Full calendar access (Google doesn't offer restricted scopes)
+This server uses **intentionally restrictive OAuth scopes** for maximum security by default. These scopes are compatible with [Google Advanced Protection Program](https://landing.google.com/advancedprotection/) and follow the principle of least privilege.
 
-**Custom Scopes**: Add any additional scopes via `GOOGLE_ADDITIONAL_SCOPES` environment variable.
+### Default Scopes (Security-First)
+- `drive.file` - Only files created by this app (not full Drive access)
+- `gmail.send` + `gmail.readonly` + `gmail.labels` - Send, read, and manage labels
+- `contacts.readonly` - Read contacts for smart name resolution  
+- `calendar` - Full calendar access (Google doesn't offer restricted calendar scopes)
+
+### Expanding Permissions
+If you need broader access, add scopes to your `.env` file:
+
+```env
+# Example: Full Drive access + Gmail modify
+GOOGLE_ADDITIONAL_SCOPES=https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify
+
+# Common broader scopes:
+# https://www.googleapis.com/auth/drive - Full Google Drive access
+# https://www.googleapis.com/auth/gmail.modify - Full Gmail modification
+# https://www.googleapis.com/auth/spreadsheets - Google Sheets access
+# https://www.googleapis.com/auth/contacts - Full contacts read/write
+```
+
+**Security Note**: The default restricted scopes protect your account even if credentials are compromised. Only expand permissions if you specifically need the additional functionality.
+
+**File**: Scopes are defined in `src/google_mcp_server/auth.py` (`DEFAULT_SCOPES`)
 
 ## 📚 Documentation
 

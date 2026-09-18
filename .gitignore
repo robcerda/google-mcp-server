@@ -46,3 +46,4 @@ Thumbs.db
 # Credentials and tokens
 token.json
 credentials.json
+service-account.json

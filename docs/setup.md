@@ -9,7 +9,33 @@ This guide walks you through setting up the Google MCP Server with detailed Goog
 - A Google account
 - Claude Desktop or MCP-compatible client
 
-## Google Cloud Console Setup
+## Choosing an Authentication Mode
+
+The server supports two ways to authenticate. Pick one before you start.
+
+| | **OAuth2** (default) | **Service Account** |
+|---|---|---|
+| Acts as | You | Its own robot identity |
+| Setup | Browser consent screen, once | Drop a key file in place |
+| Services | Drive, Gmail, Calendar, Contacts | Calendar and Drive only |
+| Data it can see | Everything your account can | Only what you share with it |
+| Needs a browser | Yes | No |
+| Works under [Advanced Protection](https://landing.google.com/advancedprotection/) | No | Yes |
+
+**Use OAuth2** unless you have a reason not to - it is the full-featured path and
+gets you Gmail and contact resolution.
+
+**Use a service account** if the consent screen is blocked for you (Advanced
+Protection enrollment does this), or if you are running the server somewhere
+without a browser, such as a remote VM. The trade-off is Gmail and Contacts:
+reading a human's mailbox or address book as a service account requires
+domain-wide delegation, which only a Google Workspace admin can grant. A
+personal Gmail account cannot, so those tools will not work in this mode.
+
+The server picks the mode automatically: if a service account key file is
+present it is used, otherwise the OAuth2 flow runs.
+
+## Option A: OAuth2 Setup (Google Cloud Console)
 
 ### Step 1: Create a Google Cloud Project
 
@@ -63,6 +89,99 @@ This guide walks you through setting up the Google MCP Server with detailed Goog
 
 **Note**: The default redirect URI is `http://localhost:8080`. If you need to use a different port, make sure to update both the Google Cloud Console configuration and your `.env` file.
 
+## Option B: Service Account Setup
+
+No consent screen and no browser - the key signs a JWT directly, which is why
+this path works under Advanced Protection.
+
+### Step 1: Create the Service Account
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), go to
+   "IAM & Admin" > "Service Accounts"
+2. Click "Create Service Account"
+3. Give it a name (e.g. "google-mcp-server") and click "Create and Continue"
+4. Skip the optional role and user grants - the service account needs no
+   project roles, only the shares you grant it in Step 4
+5. Click "Done"
+
+### Step 2: Enable the APIs
+
+On the *same project as the service account*, go to "APIs & Services" >
+"Library" and enable:
+
+- **Google Calendar API**
+- **Google Drive API**
+
+Gmail and People APIs are not used in this mode, so there is no need to enable
+them.
+
+### Step 3: Download and Install the Key
+
+1. Click into the service account, open the "Keys" tab
+2. "Add Key" > "Create new key" > **JSON** > "Create"
+3. A `.json` file downloads - this is the only copy, Google will not show it again
+4. Move it into place:
+
+```bash
+mkdir -p ~/.config/google-mcp-server
+mv ~/Downloads/your-project-abc123.json ~/.config/google-mcp-server/service-account.json
+chmod 600 ~/.config/google-mcp-server/service-account.json
+```
+
+To keep it somewhere else, point `GOOGLE_SERVICE_ACCOUNT_JSON` at it instead:
+
+```env
+GOOGLE_SERVICE_ACCOUNT_JSON=/secure/path/to/key.json
+```
+
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are not required in this mode.
+
+### Step 4: Share Your Data With It
+
+This is the step people miss. A service account is **its own identity** with its
+own empty Drive and empty calendar. It cannot see your files or events until you
+share them, exactly as you would share with a coworker.
+
+Open the key file and copy the `client_email` value - it looks like
+`google-mcp-server@your-project.iam.gserviceaccount.com`. Then:
+
+**Calendar**: Google Calendar > hover your calendar > "Settings and sharing" >
+"Share with specific people or groups" > "Add people" > paste the
+`client_email`. For the server to create and edit events, choose
+"Make changes to events".
+
+**Drive**: right-click the folder or file > "Share" > paste the `client_email` >
+pick "Viewer" or "Editor". Sharing a folder covers everything inside it.
+
+Anything you do not share stays invisible to the server. That is the security
+model - it is a narrower blast radius than OAuth2, not a wider one.
+
+### Step 5: Verify
+
+```bash
+uv run python -c "
+import sys; sys.path.insert(0, 'src')
+from google_mcp_server.auth import GoogleAuthManager
+m = GoogleAuthManager()
+print('service account mode:', m.use_service_account)
+print(m.get_user_info())
+"
+```
+
+You should see `service account mode: True` and the service account's email. In
+Claude, `google_auth_status` reports the same thing.
+
+### Service Account Notes
+
+- **Files the server creates are owned by the service account**, not by you. To
+  keep ownership yourself, have it create files inside a folder you shared with
+  it as Editor, or share the result back to your own address afterwards.
+- **Service account keys do not expire.** `google_auth_revoke` has no token to
+  clear in this mode; to cut off access, delete the key in the Cloud Console or
+  remove the local file.
+- **Gmail and contact tools will fail** in this mode. See the mode comparison
+  above for why.
+
 ## Installation
 
 ```bash
@@ -86,6 +205,9 @@ Copy the example environment file and configure your Google OAuth2 credentials:
 ```bash
 cp .env.example .env
 ```
+
+*Using a service account? `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are not
+required - skip to the Claude Desktop config below.*
 
 Edit the `.env` file with your Google Cloud Console credentials:
 
@@ -173,7 +295,11 @@ uv run mcp run server.py
 
 ## First Run Authentication
 
-When you first use the server, it will automatically launch your browser for OAuth2 authentication:
+**Service account mode**: nothing happens on first run - the key authenticates
+silently. If a tool reports it cannot find a calendar or file, revisit Step 4
+above and confirm you shared it with the `client_email`.
+
+**OAuth2 mode**: the server will automatically launch your browser for authentication:
 
 1. The server will open your default browser
 2. Sign in to your Google account

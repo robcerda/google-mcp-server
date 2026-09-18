@@ -9,6 +9,7 @@ import logging
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
@@ -29,31 +30,83 @@ DEFAULT_SCOPES = [
     'https://www.googleapis.com/auth/userinfo.email',
 ]
 
+# Scopes used when authenticating as a service account.
+#
+# Deliberately narrower than DEFAULT_SCOPES: a service account is its own
+# identity, so it can only reach data that has been explicitly shared with it.
+# Gmail and Contacts are excluded because reading a human's mailbox or address
+# book requires domain-wide delegation, which only a Google Workspace admin can
+# grant - a personal Gmail account cannot. Calendar and Drive work without it,
+# because calendars and folders can be shared with the service account directly.
+SERVICE_ACCOUNT_SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/drive',
+]
+
+# Where the service account key is looked for, unless GOOGLE_SERVICE_ACCOUNT_JSON
+# points somewhere else.
+DEFAULT_SERVICE_ACCOUNT_FILE = (
+    Path.home() / '.config' / 'google-mcp-server' / 'service-account.json'
+)
+
+
+def find_service_account_key() -> Optional[Path]:
+    """
+    Locate the service account key file, if one is configured.
+
+    Returns:
+        Path to an existing key file, or None to fall back to the OAuth flow
+    """
+    override = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
+    path = Path(override).expanduser() if override else DEFAULT_SERVICE_ACCOUNT_FILE
+    return path if path.exists() else None
+
 class GoogleAuthManager:
     """Manages Google OAuth2 authentication and credential storage."""
     
-    def __init__(self, client_id: str, client_secret: str, 
+    def __init__(self, client_id: Optional[str] = None,
+                 client_secret: Optional[str] = None,
                  redirect_uri: str = "http://localhost:8080",
                  additional_scopes: Optional[List[str]] = None):
         """
         Initialize the Google Auth Manager.
         
+        If a service account key file is present, that is used and the OAuth2
+        flow is skipped entirely - which is the point, since Google Advanced
+        Protection blocks the consent screen but not service account JWT
+        signing. Otherwise the usual browser-based OAuth2 flow runs, and
+        client_id/client_secret are required.
+        
         Args:
-            client_id: Google OAuth2 client ID
-            client_secret: Google OAuth2 client secret
+            client_id: Google OAuth2 client ID (not needed for service accounts)
+            client_secret: Google OAuth2 client secret (ditto)
             redirect_uri: OAuth2 redirect URI (must match Google Console config)
-            additional_scopes: Additional OAuth2 scopes beyond defaults
+            additional_scopes: Additional scopes beyond the defaults
         """
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         
+        # Service account key takes precedence over the OAuth flow
+        self.service_account_file = find_service_account_key()
+        self.use_service_account = self.service_account_file is not None
+        self._service_account_credentials: Optional[service_account.Credentials] = None
+        
         # Combine default and additional scopes
-        self.scopes = DEFAULT_SCOPES.copy()
+        base_scopes = SERVICE_ACCOUNT_SCOPES if self.use_service_account else DEFAULT_SCOPES
+        self.scopes = base_scopes.copy()
         if additional_scopes:
             self.scopes.extend(additional_scopes)
         # Sort scopes to ensure consistent ordering
-        self.scopes = sorted(self.scopes)
+        self.scopes = sorted(set(self.scopes))
+        
+        if self.use_service_account:
+            logger.info(f"Using service account credentials from {self.service_account_file}")
+        elif not (self.client_id and self.client_secret):
+            raise ValueError(
+                "client_id and client_secret are required when no service account "
+                "key file is present. See docs/setup.md for both auth modes."
+            )
         
         # Credential storage path
         self.credentials_dir = Path.home() / '.config' / 'google-mcp-server'
@@ -65,8 +118,11 @@ class GoogleAuthManager:
         Get valid credentials, refreshing or re-authenticating as needed.
         
         Returns:
-            Valid Google OAuth2 credentials or None if authentication fails
+            Valid Google credentials or None if authentication fails
         """
+        if self.use_service_account:
+            return self._get_service_account_credentials()
+        
         creds = None
         
         # Load existing token if available
@@ -92,6 +148,39 @@ class GoogleAuthManager:
             creds = self._run_oauth_flow()
             
         return creds
+    
+    def _get_service_account_credentials(self) -> Optional[service_account.Credentials]:
+        """
+        Build credentials from the service account key file.
+        
+        No consent screen and no browser: the key signs a JWT and exchanges it
+        for an access token, which is why this works under Advanced Protection.
+        
+        Returns:
+            Valid service account credentials or None if the key is unusable
+        """
+        try:
+            if not self._service_account_credentials:
+                self._service_account_credentials = service_account.Credentials.from_service_account_file(
+                    str(self.service_account_file),
+                    scopes=self.scopes
+                )
+                logger.info(
+                    f"Loaded service account {self._service_account_credentials.service_account_email}"
+                )
+            
+            creds = self._service_account_credentials
+            if not creds.valid:
+                creds.refresh(Request())
+                logger.info("Refreshed service account access token")
+            
+            return creds
+            
+        except Exception as e:
+            logger.error(f"Failed to load service account credentials: {e}")
+            print(f"❌ Service account authentication failed: {e}")
+            self._service_account_credentials = None
+            return None
     
     def _run_oauth_flow(self) -> Optional[Credentials]:
         """
@@ -182,6 +271,15 @@ class GoogleAuthManager:
         Returns:
             True if successfully revoked, False otherwise
         """
+        if self.use_service_account:
+            self._service_account_credentials = None
+            print(
+                "ℹ️ Using a service account - there is no stored token to revoke. "
+                f"To disable access, delete {self.service_account_file} or remove "
+                "the key in the Google Cloud Console."
+            )
+            return True
+        
         try:
             if self.token_file.exists():
                 # Load credentials to revoke them
@@ -217,6 +315,15 @@ class GoogleAuthManager:
         creds = self.get_credentials()
         if not creds:
             return None
+        
+        # A service account is its own identity, not a signed-in user, so the
+        # userinfo endpoint does not apply - report the account itself instead.
+        if self.use_service_account:
+            return {
+                'name': 'Service Account',
+                'email': creds.service_account_email,
+                'auth_mode': 'service_account',
+            }
             
         try:
             service = build('oauth2', 'v2', credentials=creds)

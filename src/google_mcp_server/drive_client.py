@@ -133,13 +133,14 @@ class GoogleDriveClient:
                 'error': str(e)
             }
     
-    def get_file(self, file_id: str, include_content: bool = False) -> Dict[str, Any]:
+    def get_file(self, file_id: str, include_content: bool = False, max_content_size: int = 1000000) -> Dict[str, Any]:
         """
         Get file metadata and optionally content.
         
         Args:
             file_id: Google Drive file ID
             include_content: Whether to include file content
+            max_content_size: Maximum content size in characters (default: 1000000)
             
         Returns:
             Dictionary containing file metadata and optional content
@@ -168,7 +169,7 @@ class GoogleDriveClient:
             
             # Get file content if requested and it's a text file
             if include_content and not result['file']['isFolder']:
-                content = self._get_file_content(file_id, file['mimeType'])
+                content = self._get_file_content(file_id, file['mimeType'], max_content_size)
                 result['file']['content'] = content
             
             return result
@@ -186,16 +187,17 @@ class GoogleDriveClient:
                 'error': str(e)
             }
     
-    def _get_file_content(self, file_id: str, mime_type: str) -> str:
+    def _get_file_content(self, file_id: str, mime_type: str, max_content_size: int = 1000000) -> str:
         """
         Get file content based on MIME type.
         
         Args:
             file_id: Google Drive file ID
             mime_type: File MIME type
+            max_content_size: Maximum content size in characters
             
         Returns:
-            File content as string
+            File content as string (truncated if exceeds max_content_size)
         """
         try:
             # Handle Google Workspace documents
@@ -227,11 +229,18 @@ class GoogleDriveClient:
             # Convert bytes to string
             if isinstance(content, bytes):
                 try:
-                    return content.decode('utf-8')
+                    decoded_content = content.decode('utf-8')
                 except UnicodeDecodeError:
                     return f"[Binary content - {len(content)} bytes]"
             else:
-                return str(content)
+                decoded_content = str(content)
+            
+            # Apply content size limit
+            if len(decoded_content) > max_content_size:
+                truncated_content = decoded_content[:max_content_size]
+                return f"{truncated_content}\n\n[Content truncated - showing first {max_content_size:,} characters of {len(decoded_content):,} total characters. Use max_content_size parameter to retrieve more content.]"
+            else:
+                return decoded_content
                 
         except Exception as e:
             logger.error(f"Error getting file content: {e}")
@@ -942,3 +951,400 @@ class GoogleDriveClient:
             mime_type='application/vnd.google-apps.presentation',
             drive_id=drive_id
         )
+    
+    def analyze_file_structure(self, file_id: str) -> Dict[str, Any]:
+        """
+        Analyze large files before processing to determine optimal strategy.
+        
+        Args:
+            file_id: Google Drive file ID
+            
+        Returns:
+            Dictionary containing file analysis and recommended processing approach
+        """
+        try:
+            # Get file metadata first
+            file_info = self.get_file(file_id, include_content=False)
+            if not file_info.get('success'):
+                return file_info
+            
+            file_meta = file_info['file']
+            file_size = file_meta.get('size', 'N/A')
+            mime_type = file_meta.get('mimeType', '')
+            
+            # Convert size to approximate character count
+            size_bytes = 0
+            if file_size != 'N/A':
+                try:
+                    size_bytes = int(file_size)
+                except (ValueError, TypeError):
+                    size_bytes = 0
+            
+            # Estimate character count (roughly 1 byte per character for text)
+            estimated_chars = size_bytes
+            
+            # Get a small sample to analyze structure
+            sample_content = ""
+            if estimated_chars > 0:
+                try:
+                    sample_result = self.get_file(file_id, include_content=True, max_content_size=5000)
+                    if sample_result.get('success') and 'content' in sample_result.get('file', {}):
+                        sample_content = sample_result['file']['content']
+                except Exception:
+                    pass
+            
+            # Analyze file characteristics
+            analysis = {
+                'success': True,
+                'file_id': file_id,
+                'name': file_meta['name'],
+                'size_bytes': size_bytes,
+                'estimated_characters': estimated_chars,
+                'mime_type': mime_type,
+                'is_large_file': estimated_chars > 1000000,  # > 1MB
+                'is_text_based': self._is_text_based_mime_type(mime_type),
+                'sample_content': sample_content[:1000] if sample_content else "",
+                'processing_recommendations': []
+            }
+            
+            # Add specific analysis for different file types
+            if 'json' in mime_type.lower() or (sample_content and self._looks_like_json(sample_content)):
+                json_analysis = self._analyze_json_structure(sample_content)
+                analysis.update(json_analysis)
+                analysis['file_type'] = 'json'
+                
+                # Add processing recommendations
+                if estimated_chars > 5000000:  # > 5MB
+                    analysis['processing_recommendations'].append('Use streaming mode for processing')
+                    analysis['processing_recommendations'].append('Consider targeted extraction for specific sections')
+                elif estimated_chars > 1000000:  # > 1MB
+                    analysis['processing_recommendations'].append('Use smart mode for automatic optimization')
+                    analysis['processing_recommendations'].append('Chunked processing may be beneficial')
+                else:
+                    analysis['processing_recommendations'].append('Standard processing should work fine')
+                    
+            elif 'csv' in mime_type.lower() or self._looks_like_csv(sample_content):
+                analysis['file_type'] = 'csv'
+                analysis['processing_recommendations'].append('Consider line-by-line processing for large files')
+                
+            elif 'xml' in mime_type.lower() or self._looks_like_xml(sample_content):
+                analysis['file_type'] = 'xml'
+                analysis['processing_recommendations'].append('Use streaming XML parser for large files')
+                
+            else:
+                analysis['file_type'] = 'text' if analysis['is_text_based'] else 'binary'
+                if analysis['is_text_based'] and estimated_chars > 1000000:
+                    analysis['processing_recommendations'].append('Use chunked reading for large text files')
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing file structure: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _is_text_based_mime_type(self, mime_type: str) -> bool:
+        """Check if MIME type indicates a text-based file."""
+        text_types = [
+            'text/', 'application/json', 'application/xml', 'application/csv',
+            'application/javascript', 'application/sql', 'application/vnd.google-apps'
+        ]
+        return any(mime_type.startswith(t) for t in text_types)
+    
+    def _looks_like_json(self, content: str) -> bool:
+        """Check if content looks like JSON."""
+        if not content:
+            return False
+        content = content.strip()
+        return (content.startswith('{') and '}' in content) or (content.startswith('[') and ']' in content)
+    
+    def _looks_like_csv(self, content: str) -> bool:
+        """Check if content looks like CSV."""
+        if not content:
+            return False
+        lines = content.split('\n')[:5]  # Check first 5 lines
+        for line in lines:
+            if ',' in line and len(line.split(',')) > 1:
+                return True
+        return False
+    
+    def _looks_like_xml(self, content: str) -> bool:
+        """Check if content looks like XML."""
+        if not content:
+            return False
+        content = content.strip()
+        return content.startswith('<') and '>' in content
+    
+    def _analyze_json_structure(self, sample_content: str) -> Dict[str, Any]:
+        """Analyze JSON structure from sample content."""
+        analysis = {
+            'json_type': 'unknown',
+            'estimated_depth': 0,
+            'has_arrays': False,
+            'top_level_keys': [],
+            'structure_complexity': 'simple'
+        }
+        
+        if not sample_content:
+            return analysis
+        
+        try:
+            import json
+            import re
+            
+            # Try to parse a small portion to understand structure
+            sample = sample_content.strip()
+            
+            # Detect if it's an object or array at root level
+            if sample.startswith('{'):
+                analysis['json_type'] = 'object'
+                
+                # Try to extract top-level keys from sample
+                key_pattern = r'"([^"]+)"\s*:'
+                keys = re.findall(key_pattern, sample[:2000])  # First 2000 chars
+                analysis['top_level_keys'] = list(set(keys))[:10]  # Max 10 keys
+                
+            elif sample.startswith('['):
+                analysis['json_type'] = 'array'
+                analysis['has_arrays'] = True
+            
+            # Estimate nesting depth by counting braces/brackets
+            open_braces = sample.count('{') + sample.count('[')
+            close_braces = sample.count('}') + sample.count(']')
+            analysis['estimated_depth'] = min(open_braces, close_braces) // 2
+            
+            # Determine complexity
+            if analysis['estimated_depth'] > 5 or len(analysis['top_level_keys']) > 20:
+                analysis['structure_complexity'] = 'complex'
+            elif analysis['estimated_depth'] > 2 or len(analysis['top_level_keys']) > 5:
+                analysis['structure_complexity'] = 'moderate'
+                
+            # Check for arrays
+            if '[' in sample:
+                analysis['has_arrays'] = True
+                
+        except Exception as e:
+            logger.warning(f"Error analyzing JSON structure: {e}")
+        
+        return analysis
+    
+    def get_file_sample(self, file_id: str, sample_size: int = 1000, offset: int = 0) -> Dict[str, Any]:
+        """
+        Get representative sample from large files.
+        
+        Args:
+            file_id: Google Drive file ID
+            sample_size: Size of sample in characters
+            offset: Starting position in file
+            
+        Returns:
+            Dictionary containing sample content and metadata
+        """
+        try:
+            # Get a larger chunk that includes the desired sample
+            chunk_size = max(sample_size * 2, 10000)
+            result = self.get_file(file_id, include_content=True, max_content_size=chunk_size)
+            
+            if not result.get('success'):
+                return result
+            
+            file_info = result['file']
+            content = file_info.get('content', '')
+            
+            # Extract sample at specified offset
+            if offset >= len(content):
+                return {
+                    'success': False,
+                    'error': f'Offset {offset} is beyond content length {len(content)}'
+                }
+            
+            sample = content[offset:offset + sample_size]
+            
+            return {
+                'success': True,
+                'file_id': file_id,
+                'file_name': file_info['name'],
+                'total_content_length': len(content),
+                'sample_offset': offset,
+                'sample_size': len(sample),
+                'sample_content': sample,
+                'is_complete_file': len(content) < chunk_size
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting file sample: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def search_in_large_file(self, file_id: str, pattern: str, max_results: int = 100, chunk_size: int = 50000) -> Dict[str, Any]:
+        """
+        Search patterns in large files without full load.
+        
+        Args:
+            file_id: Google Drive file ID
+            pattern: Search pattern (regex supported)
+            max_results: Maximum number of results to return
+            chunk_size: Size of chunks to process
+            
+        Returns:
+            Dictionary containing search results
+        """
+        try:
+            import re
+            
+            # First get file info
+            file_info = self.get_file(file_id, include_content=False)
+            if not file_info.get('success'):
+                return file_info
+            
+            results = []
+            current_pos = 0
+            chunk_num = 0
+            overlap_size = min(len(pattern) * 2, 1000)  # Overlap to catch patterns across chunks
+            
+            while len(results) < max_results:
+                # Get chunk with overlap
+                start_pos = max(0, current_pos - overlap_size)
+                effective_chunk_size = chunk_size + overlap_size
+                
+                # Get content for this chunk
+                chunk_result = self.get_file(file_id, include_content=True, max_content_size=effective_chunk_size)
+                if not chunk_result.get('success'):
+                    break
+                
+                content = chunk_result['file'].get('content', '')
+                if not content or start_pos >= len(content):
+                    break
+                
+                # Extract the actual chunk
+                chunk_content = content[start_pos:start_pos + effective_chunk_size]
+                if not chunk_content:
+                    break
+                
+                # Search in this chunk
+                try:
+                    matches = re.finditer(pattern, chunk_content, re.IGNORECASE)
+                    for match in matches:
+                        if len(results) >= max_results:
+                            break
+                        
+                        # Calculate absolute position
+                        abs_pos = start_pos + match.start()
+                        
+                        # Avoid duplicates from overlap region
+                        if chunk_num > 0 and match.start() < overlap_size:
+                            continue
+                        
+                        # Get context around match
+                        context_start = max(0, match.start() - 50)
+                        context_end = min(len(chunk_content), match.end() + 50)
+                        context = chunk_content[context_start:context_end]
+                        
+                        results.append({
+                            'match': match.group(),
+                            'position': abs_pos,
+                            'chunk_number': chunk_num,
+                            'context': context,
+                            'line_number': chunk_content[:match.start()].count('\n') + 1
+                        })
+                        
+                except re.error as regex_error:
+                    return {
+                        'success': False,
+                        'error': f'Invalid regex pattern: {regex_error}'
+                    }
+                
+                # Move to next chunk
+                current_pos += chunk_size
+                chunk_num += 1
+                
+                # Check if we've reached end of content
+                if len(chunk_content) < effective_chunk_size:
+                    break
+            
+            return {
+                'success': True,
+                'file_id': file_id,
+                'file_name': file_info['file']['name'],
+                'pattern': pattern,
+                'total_matches': len(results),
+                'matches': results,
+                'chunks_processed': chunk_num + 1
+            }
+            
+        except Exception as e:
+            logger.error(f"Error searching in large file: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def handle_json_boundaries(self, chunks: List[str]) -> str:
+        """
+        Smart JSON reconstruction from chunks.
+        
+        Args:
+            chunks: List of content chunks
+            
+        Returns:
+            Reconstructed JSON string
+        """
+        if not chunks:
+            return ""
+        
+        if len(chunks) == 1:
+            return chunks[0]
+        
+        try:
+            import json
+            
+            # Try simple concatenation first
+            combined = ''.join(chunks)
+            
+            # Try to parse to validate
+            try:
+                json.loads(combined)
+                return combined
+            except json.JSONDecodeError:
+                pass
+            
+            # If simple concatenation fails, try to fix boundaries
+            result = chunks[0]
+            
+            for i in range(1, len(chunks)):
+                current_chunk = chunks[i]
+                
+                # Find the best join point
+                # Look for complete JSON structures
+                potential_joins = []
+                
+                # Try different overlap amounts
+                for overlap in [0, 10, 50, 100, 500]:
+                    if overlap >= len(result):
+                        continue
+                    
+                    test_result = result[:-overlap] + current_chunk
+                    
+                    # Test if this creates valid JSON
+                    try:
+                        json.loads(test_result)
+                        potential_joins.append((overlap, test_result))
+                    except json.JSONDecodeError:
+                        continue
+                
+                # Use the join with the smallest overlap that works
+                if potential_joins:
+                    _, result = min(potential_joins, key=lambda x: x[0])
+                else:
+                    # Fall back to simple concatenation
+                    result += current_chunk
+            
+            return result
+            
+        except Exception as e:
+            logger.warning(f"Error handling JSON boundaries: {e}")
+            return ''.join(chunks)  # Fallback to simple concatenation

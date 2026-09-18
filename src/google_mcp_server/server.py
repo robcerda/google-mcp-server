@@ -184,11 +184,339 @@ def drive_list_files(query: str = "", folder_id: str = "", max_results: int = 10
         return f"Error: {str(e)}"
 
 @mcp.tool()
-def drive_get_file(file_id: str, include_content: bool = False) -> str:
-    """Get file metadata and content from Google Drive"""
+def drive_get_file(file_id: str, include_content: bool = False, max_content_size: int = 1000000) -> str:
+    """Get file metadata and content from Google Drive
+    
+    Args:
+        file_id: Google Drive file ID
+        include_content: Whether to include file content (default: False)
+        max_content_size: Maximum content size in characters (default: 1000000)
+    """
     try:
         client = get_drive_client()
-        result = client.get_file(file_id=file_id, include_content=include_content)
+        result = client.get_file(file_id=file_id, include_content=include_content, max_content_size=max_content_size)
+        
+        # Handle large responses that might be truncated by MCP protocol
+        if include_content and 'file' in result and 'content' in result['file']:
+            content_length = len(result['file']['content'])
+            
+            # If content is very large, provide a more compact response format
+            if content_length > 500000:  # 500K characters
+                return f"""File Retrieved Successfully:
+ID: {result['file']['id']}
+Name: {result['file']['name']}
+Size: {result['file'].get('size', 'N/A')}
+MIME Type: {result['file']['mimeType']}
+Content Length: {content_length:,} characters
+
+Content:
+{result['file']['content']}"""
+        
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def drive_get_file_chunked(file_id: str, chunk_size: int = 50000, chunk_number: int = 0) -> str:
+    """Get file content in chunks to handle very large files
+    
+    Args:
+        file_id: Google Drive file ID
+        chunk_size: Size of each chunk in characters (default: 50000)
+        chunk_number: Which chunk to retrieve (0-based, default: 0)
+    """
+    try:
+        client = get_drive_client()
+        result = client.get_file(file_id=file_id, include_content=True, max_content_size=10000000)  # 10MB max
+        
+        if not result.get('success'):
+            return str(result)
+        
+        file_info = result['file']
+        content = file_info.get('content', '')
+        
+        # Calculate chunk boundaries
+        start_pos = chunk_number * chunk_size
+        end_pos = start_pos + chunk_size
+        total_length = len(content)
+        total_chunks = (total_length + chunk_size - 1) // chunk_size  # Ceiling division
+        
+        if start_pos >= total_length:
+            return f"Error: Chunk {chunk_number} is beyond file content (total chunks: {total_chunks})"
+        
+        chunk_content = content[start_pos:end_pos]
+        actual_chunk_size = len(chunk_content)
+        
+        return f"""File Chunk Retrieved:
+ID: {file_info['id']}
+Name: {file_info['name']}
+Total File Size: {total_length:,} characters
+Chunk {chunk_number + 1} of {total_chunks} (size: {actual_chunk_size:,} characters)
+Position: {start_pos:,} - {min(end_pos, total_length):,}
+
+Content:
+{chunk_content}"""
+    
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def analyze_file_structure(file_id: str) -> str:
+    """Analyze large files before processing to determine optimal strategy
+    
+    Args:
+        file_id: Google Drive file ID
+    """
+    try:
+        client = get_drive_client()
+        result = client.analyze_file_structure(file_id)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def process_large_json(file_id: str, processing_mode: str = "smart") -> str:
+    """Process large JSON files with intelligent handling
+    
+    Args:
+        file_id: Google Drive file ID
+        processing_mode: Processing mode (smart, streaming, targeted, summary)
+    """
+    try:
+        client = get_drive_client()
+        
+        if processing_mode == "summary":
+            # Get file analysis and sample
+            analysis = client.analyze_file_structure(file_id)
+            if not analysis.get('success'):
+                return str(analysis)
+            
+            sample = client.get_file_sample(file_id, sample_size=2000)
+            
+            return f"""JSON File Summary:
+File: {analysis['name']}
+Size: {analysis['estimated_characters']:,} characters
+Type: {analysis.get('json_type', 'unknown')}
+Complexity: {analysis.get('structure_complexity', 'unknown')}
+Top-level keys: {', '.join(analysis.get('top_level_keys', [])[:5])}
+
+Sample content:
+{sample.get('sample_content', 'No sample available')}
+
+Processing recommendations:
+{chr(10).join('- ' + rec for rec in analysis.get('processing_recommendations', []))}"""
+        
+        elif processing_mode == "streaming":
+            # Use chunked processing for very large files
+            return drive_get_file_chunked(file_id, chunk_size=100000, chunk_number=0)
+        
+        elif processing_mode == "targeted":
+            # Return analysis to help user choose specific sections
+            analysis = client.analyze_file_structure(file_id)
+            return f"""Targeted Processing Available:
+Use extract_json_section() with these potential paths:
+{chr(10).join('- ' + key for key in analysis.get('top_level_keys', []))}
+
+Example: extract_json_section("{file_id}", "healthData")
+         extract_json_section("{file_id}", "workoutData")"""
+        
+        else:  # smart mode
+            # Analyze file first and choose best approach
+            analysis = client.analyze_file_structure(file_id)
+            if not analysis.get('success'):
+                return str(analysis)
+            
+            size = analysis.get('estimated_characters', 0)
+            
+            if size > 5000000:  # > 5MB
+                return f"""File too large for smart processing ({size:,} characters).
+Recommended approaches:
+1. Use processing_mode="streaming" for chunk-by-chunk processing
+2. Use processing_mode="targeted" to extract specific sections
+3. Use extract_json_section() to get only needed data"""
+            
+            elif size > 1000000:  # > 1MB, use optimized retrieval
+                result = client.get_file(file_id, include_content=True, max_content_size=size + 100000)
+                return str(result)
+            
+            else:  # Small file, standard processing
+                return drive_get_file(file_id, include_content=True)
+    
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def extract_json_section(file_id: str, json_path: str) -> str:
+    """Extract specific JSON sections without loading entire file
+    
+    Args:
+        file_id: Google Drive file ID
+        json_path: JSONPath-like syntax (e.g., "healthData.workoutData")
+    """
+    try:
+        import json
+        import re
+        
+        client = get_drive_client()
+        
+        # First analyze the file to understand structure
+        analysis = client.analyze_file_structure(file_id)
+        if not analysis.get('success'):
+            return str(analysis)
+        
+        # Parse the JSON path
+        path_parts = json_path.split('.')
+        target_key = path_parts[0]
+        
+        # For large files, use streaming approach
+        if analysis.get('estimated_characters', 0) > 1000000:
+            # Search for the target key first
+            search_pattern = f'"{target_key}"\\s*:'
+            search_result = client.search_in_large_file(file_id, search_pattern, max_results=1)
+            
+            if not search_result.get('success') or not search_result.get('matches'):
+                return f"Key '{target_key}' not found in file"
+            
+            # Get a chunk starting from where the key was found
+            match = search_result['matches'][0]
+            start_pos = max(0, match['position'] - 100)  # Include some context
+            
+            # Get a reasonably sized chunk
+            chunk_result = client.get_file(file_id, include_content=True, max_content_size=500000)
+            if not chunk_result.get('success'):
+                return str(chunk_result)
+            
+            content = chunk_result['file']['content']
+            
+            # Try to extract the section
+            try:
+                # Find the key and extract its value
+                key_pattern = f'"{target_key}"\\s*:\\s*'
+                match = re.search(key_pattern, content)
+                
+                if not match:
+                    return f"Key '{target_key}' not found in retrieved content"
+                
+                # Find the value (object or array)
+                start_idx = match.end()
+                value_start = content[start_idx:].lstrip()
+                
+                if value_start.startswith('{'):
+                    # Extract object
+                    brace_count = 0
+                    for i, char in enumerate(content[start_idx:]):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                extracted = content[start_idx:start_idx + i + 1]
+                                break
+                    else:
+                        return f"Could not find complete object for key '{target_key}'"
+                
+                elif value_start.startswith('['):
+                    # Extract array
+                    bracket_count = 0
+                    for i, char in enumerate(content[start_idx:]):
+                        if char == '[':
+                            bracket_count += 1
+                        elif char == ']':
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                extracted = content[start_idx:start_idx + i + 1]
+                                break
+                    else:
+                        return f"Could not find complete array for key '{target_key}'"
+                
+                else:
+                    # Simple value
+                    simple_match = re.search(r'[^,}\]]+', value_start)
+                    if simple_match:
+                        extracted = simple_match.group().strip()
+                    else:
+                        return f"Could not extract value for key '{target_key}'"
+                
+                # Handle nested path
+                if len(path_parts) > 1:
+                    try:
+                        data = json.loads(extracted)
+                        for part in path_parts[1:]:
+                            if isinstance(data, dict) and part in data:
+                                data = data[part]
+                            else:
+                                return f"Path '{json_path}' not found in extracted data"
+                        extracted = json.dumps(data, indent=2)
+                    except json.JSONDecodeError:
+                        return f"Extracted content is not valid JSON"
+                
+                return f"""Extracted section '{json_path}':
+Length: {len(extracted):,} characters
+
+Content:
+{extracted}"""
+                
+            except Exception as parse_error:
+                return f"Error parsing content: {parse_error}"
+        
+        else:
+            # Small file, load completely and extract
+            result = client.get_file(file_id, include_content=True)
+            if not result.get('success'):
+                return str(result)
+            
+            try:
+                data = json.loads(result['file']['content'])
+                
+                # Navigate the path
+                current = data
+                for part in path_parts:
+                    if isinstance(current, dict) and part in current:
+                        current = current[part]
+                    else:
+                        return f"Path '{json_path}' not found in JSON data"
+                
+                extracted = json.dumps(current, indent=2)
+                return f"""Extracted section '{json_path}':
+Length: {len(extracted):,} characters
+
+Content:
+{extracted}"""
+                
+            except json.JSONDecodeError as e:
+                return f"Error parsing JSON: {e}"
+    
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def get_file_sample(file_id: str, sample_size: int = 1000, offset: int = 0) -> str:
+    """Get representative sample from large files
+    
+    Args:
+        file_id: Google Drive file ID
+        sample_size: Size of sample in characters
+        offset: Starting position in file
+    """
+    try:
+        client = get_drive_client()
+        result = client.get_file_sample(file_id, sample_size, offset)
+        return str(result)
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+@mcp.tool()
+def search_in_large_file(file_id: str, pattern: str, max_results: int = 100) -> str:
+    """Search patterns in large files without full load
+    
+    Args:
+        file_id: Google Drive file ID
+        pattern: Search pattern (regex supported)
+        max_results: Maximum number of results to return
+    """
+    try:
+        client = get_drive_client()
+        result = client.search_in_large_file(file_id, pattern, max_results)
         return str(result)
     except Exception as e:
         return f"Error: {str(e)}"

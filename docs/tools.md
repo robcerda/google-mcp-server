@@ -1,25 +1,45 @@
 # All Tools Reference
 
-Complete reference for all 50+ tools available in the Google MCP Server.
+Complete reference for all 70 tools available in the Google MCP Server.
+
+| Category | Count |
+|---|---|
+| [Authentication](#authentication-tools-2-tools) | 2 |
+| [Google Drive](#google-drive-tools-15-tools) | 15 |
+| [Large File Handling](#large-file-handling-tools-6-tools) | 6 |
+| [Gmail](#gmail-tools-13-tools) | 13 |
+| [Google Calendar](#google-calendar-tools-10-tools) | 10 |
+| [Contacts](#contact-management-tools-7-tools) | 7 |
+| [Safe Tools (prepare)](#safe-tools-with-contact-resolution-4-tools) | 4 |
+| [Confirmation](#confirmation-tools-5-tools) | 5 |
+| [Unsafe Tools](#unsafe-tools-4-tools) | 4 |
+| [Cross-Service Integration](#cross-service-integration-tools-4-tools) | 4 |
+
+**Note on service account mode**: if you authenticate with a service account
+rather than OAuth2, only the Drive and Calendar tools work. Gmail and Contacts
+tools require domain-wide delegation. See the
+[setup guide](setup.md#choosing-an-authentication-mode).
 
 ## Authentication Tools (2 tools)
 
 - **google_auth_status**: Check current authentication status
 - **google_auth_revoke**: Revoke authentication and clear stored credentials
+  - In service account mode there is no stored token; this reports where the key lives instead
 
-## Google Drive Tools (17 tools)
+## Google Drive Tools (15 tools)
 
 ### Basic Operations
 - **drive_list_files**: List files in Google Drive
   - Parameters: `query`, `folder_id`, `max_results`, `drive_id`, `include_team_drives`
 - **drive_get_file**: Get file metadata and content
-  - Parameters: `file_id`, `include_content`
+  - Parameters: `file_id`, `include_content`, `max_content_size`
+  - Content beyond `max_content_size` (default 1,000,000 characters) is truncated with a notice. For anything larger, see [Large File Handling](#large-file-handling-tools-6-tools).
 - **drive_create_file**: Create a file in Google Drive
   - Parameters: `name`, `content`, `parent_folder_id`, `mime_type`, `drive_id`
 - **drive_upload_file**: Upload a file to Google Drive
   - Parameters: `name`, `content`, `parent_folder_id`, `mime_type`, `drive_id`
 - **drive_create_folder**: Create a folder in Google Drive
-  - Parameters: `name`, `parent_folder_id`
+  - Parameters: `name`, `parent_folder_id`, `drive_id`
 
 ### File Management
 - **drive_copy_file**: Copy files within Drive
@@ -51,7 +71,29 @@ Complete reference for all 50+ tools available in the Google MCP Server.
 - **drive_create_google_slide**: Create Google Slides (supports HTML content)
   - Parameters: `name`, `content`, `parent_folder_id`, `drive_id`
 
-## Gmail Tools (12 tools)
+## Large File Handling Tools (6 tools)
+
+For Drive files too big to read in one pass without blowing the context window.
+Start with `analyze_file_structure` - it sizes the file up and tells you which
+of the others to reach for.
+
+- **analyze_file_structure**: Inspect a file before processing and recommend a strategy
+  - Parameters: `file_id`
+  - Reports size, MIME type, detected format (json/csv/xml/text/binary), and processing recommendations
+- **drive_get_file_chunked**: Read content one fixed-size chunk at a time
+  - Parameters: `file_id`, `chunk_size` (default 50,000 chars), `chunk_number` (0-based)
+  - Each response reports the current chunk number and the total, so you can page through
+- **get_file_sample**: Pull a representative slice from anywhere in a file
+  - Parameters: `file_id`, `sample_size` (default 1,000 chars), `offset`
+- **search_in_large_file**: Find a pattern without loading the whole file
+  - Parameters: `file_id`, `pattern` (regex supported), `max_results` (default 100)
+- **process_large_json**: Handle large JSON with a mode suited to its size
+  - Parameters: `file_id`, `processing_mode`
+  - Modes: `smart` (default, picks an approach from the file size), `summary` (structure and key overview), `streaming` (chunk-by-chunk), `targeted` (points you at `extract_json_section`)
+- **extract_json_section**: Pull one section out without parsing the entire document
+  - Parameters: `file_id`, `json_path` (dotted path, e.g. `healthData.workoutData`)
+
+## Gmail Tools (13 tools)
 
 ### Basic Operations
 - **gmail_list_messages**: List Gmail messages
@@ -85,6 +127,11 @@ Complete reference for all 50+ tools available in the Google MCP Server.
 - **gmail_list_drafts**: List draft messages
   - Parameters: `max_results`
 
+### Bulk Operations
+- **gmail_bulk_modify**: ⚠️ Add or remove labels across every message matching a query
+  - Parameters: `query`, `add_labels`, `remove_labels`, `max_messages` (default 1000)
+  - Executes immediately. Use **prepare_bulk_modify** to see a preview and confirm first.
+
 ## Google Calendar Tools (10 tools)
 
 ### Basic Operations
@@ -92,7 +139,7 @@ Complete reference for all 50+ tools available in the Google MCP Server.
 - **calendar_list_events**: List calendar events
   - Parameters: `calendar_id`, `time_min`, `time_max`, `max_results`
 - **calendar_create_event**: Create calendar events
-  - Parameters: `summary`, `start_time`, `end_time`, `description`, `location`, `attendees`
+  - Parameters: `summary`, `start_time`, `end_time`, `calendar_id`, `description`, `location`, `attendees`
 - **calendar_search_events**: Search events by content
   - Parameters: `query`, `calendar_id`, `time_min`, `time_max`, `max_results`
 
@@ -128,7 +175,7 @@ Complete reference for all 50+ tools available in the Google MCP Server.
   - Parameters: `name_or_email`
 - **contacts_debug**: Debug contacts API connection and permissions
 
-## Safe Tools with Contact Resolution (3 tools)
+## Safe Tools with Contact Resolution (4 tools)
 
 These tools automatically resolve contact names to email addresses and require explicit confirmation:
 
@@ -138,12 +185,20 @@ These tools automatically resolve contact names to email addresses and require e
   - Parameters: `file_id`, `recipient` (name or email), `role`, `send_notification`, `message`
 - **prepare_create_event**: ✅ SAFE: Prepare calendar event - shows preview and requires confirmation
   - Parameters: `summary`, `start_time`, `end_time`, `attendees` (names or emails), `calendar_id`, `description`, `location`
+- **prepare_bulk_modify**: ✅ SAFE: Preview a bulk label change before it runs
+  - Parameters: `query`, `add_labels`, `remove_labels`, `max_messages`
+  - Shows how many messages match and a sample of them
 
-## Confirmation Tools (4 tools)
+## Confirmation Tools (5 tools)
 
 - **confirm_send_email**: ✅ Confirm and send the prepared email
+  - Parameters: `to`, `subject`, `body`, `cc`, `bcc`
 - **confirm_share_file**: ✅ Confirm and share the prepared file
+  - Parameters: `file_id`, `recipient_email`, `role`, `send_notification`, `message`
 - **confirm_create_event**: ✅ Confirm and create the prepared calendar event
+  - Parameters: `summary`, `start_time`, `end_time`, `attendees`, `calendar_id`, `description`, `location`
+- **confirm_bulk_modify**: ✅ Confirm and run the prepared bulk label change
+  - Parameters: `query`, `add_labels`, `remove_labels`, `max_messages`
 - **cancel_operation**: ❌ Cancel any pending operation
 
 ## Unsafe Tools (4 tools)
@@ -151,9 +206,13 @@ These tools automatically resolve contact names to email addresses and require e
 These tools execute immediately without confirmation (use with caution):
 
 - **smart_send_email_unsafe**: ⚠️ UNSAFE: Send email immediately without confirmation
+  - Parameters: `to`, `subject`, `body`, `cc`, `bcc`
 - **smart_share_file_unsafe**: ⚠️ UNSAFE: Share file immediately without confirmation
+  - Parameters: `file_id`, `recipient`, `role`, `send_notification`, `message`
 - **smart_create_event_unsafe**: ⚠️ UNSAFE: Create calendar event immediately without confirmation
+  - Parameters: `summary`, `start_time`, `end_time`, `attendees`, `calendar_id`, `description`, `location`
 - **smart_forward_email_unsafe**: ⚠️ UNSAFE: Forward email immediately without confirmation
+  - Parameters: `message_id`, `to`, `body`
 
 ## Cross-Service Integration Tools (4 tools)
 

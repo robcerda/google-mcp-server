@@ -35,6 +35,10 @@ personal Gmail account cannot, so those tools will not work in this mode.
 The server picks the mode automatically: if a service account key file is
 present it is used, otherwise the OAuth2 flow runs.
 
+If you need Gmail or Contacts on a machine with no browser, there is a third
+path: OAuth2 completed manually, see
+[Headless and Remote Machines](#headless-and-remote-machines).
+
 ## Option A: OAuth2 Setup (Google Cloud Console)
 
 ### Step 1: Create a Google Cloud Project
@@ -308,6 +312,40 @@ above and confirm you shared it with the `client_email`.
 5. Return to Claude - you're now authenticated!
 
 Your credentials will be securely stored locally in `~/.config/google-mcp-server/token.json`.
+
+## Headless and Remote Machines
+
+The OAuth2 flow above opens a browser and waits on `http://localhost:8080`. On a
+remote VM, in a container, or over plain SSH there is no browser to open and no
+way to reach that port, so it never completes.
+
+Two ways around it, in order of preference:
+
+**1. Use a service account** ([Option B](#option-b-service-account-setup)). No
+browser is involved at any point. This is the better answer if Calendar and
+Drive are all you need.
+
+**2. Use `auth_setup.py`** if you need Gmail or Contacts, which service accounts
+cannot reach. It splits the flow in two - it prints a URL you open on any machine
+that *does* have a browser, then takes the redirect back from you:
+
+```bash
+python auth_setup.py
+```
+
+Approve the request in your browser. It will redirect to `http://localhost:8080`
+and show a connection error - that is expected, nothing is listening there. Copy
+the **entire URL** out of the address bar, including the `state` and `code`
+parameters, and paste it back at the prompt. The token is written to
+`~/.config/google-mcp-server/token.json`, exactly where the server reads it from.
+
+```bash
+python auth_setup.py --status   # check whether the stored token works
+python auth_setup.py --force    # re-authenticate, replacing the token
+```
+
+The authorization code is single-use and expires within minutes. If the exchange
+fails, just run the script again for a fresh URL.
 
 ## Advanced Configuration
 

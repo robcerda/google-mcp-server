@@ -8,7 +8,7 @@ Transform Claude into your Google productivity assistant. Send emails to "John S
 
 - **🧠 Smart Contact Resolution**: `send email to Spencer Varney about the meeting` → automatically finds spencer.varney@company.com
 - **🔒 Secure by Default**: Uses [restricted scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth) compatible with [Google Advanced Protection](https://landing.google.com/advancedprotection/)
-- **📱 50+ Tools**: Complete Gmail, Drive, Calendar integration with shared drive support
+- **📱 70 Tools**: Complete Gmail, Drive, Calendar integration, shared drives, and large-file handling
 - **⚡ Safety First**: All send/share operations require explicit confirmation
 
 ## 🚀 Quick Start
@@ -94,7 +94,7 @@ If the OAuth consent screen is blocked for you - [Advanced Protection](https://l
 ## 📚 Documentation
 
 - **[Complete Setup Guide](docs/setup.md)** - Detailed Google Cloud Console configuration
-- **[All Tools Reference](docs/tools.md)** - Complete list of 50+ available tools
+- **[All Tools Reference](docs/tools.md)** - Complete list of all 70 available tools
 - **[Usage Examples](docs/examples.md)** - Common workflows and advanced usage
 - **[Troubleshooting](docs/troubleshooting.md)** - Solutions for common issues
 

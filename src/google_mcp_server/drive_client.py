@@ -149,7 +149,8 @@ class GoogleDriveClient:
             # Get file metadata
             file = self.service.files().get(
                 fileId=file_id,
-                fields="id, name, mimeType, size, createdTime, modifiedTime, parents, webViewLink, description"
+                fields="id, name, mimeType, size, createdTime, modifiedTime, parents, webViewLink, description",
+                supportsAllDrives=True
             ).execute()
             
             result = {
@@ -221,7 +222,10 @@ class GoogleDriveClient:
                 )
             else:
                 # Get raw file content
-                request = self.service.files().get_media(fileId=file_id)
+                request = self.service.files().get_media(
+                    fileId=file_id,
+                    supportsAllDrives=True
+                )
             
             # Execute request
             content = request.execute()
@@ -482,11 +486,18 @@ class GoogleDriveClient:
         """
         try:
             # Get file name first
-            file = self.service.files().get(fileId=file_id, fields='name').execute()
+            file = self.service.files().get(
+                fileId=file_id,
+                fields='name',
+                supportsAllDrives=True
+            ).execute()
             file_name = file['name']
             
             # Delete file
-            self.service.files().delete(fileId=file_id).execute()
+            self.service.files().delete(
+                fileId=file_id,
+                supportsAllDrives=True
+            ).execute()
             
             return {
                 'success': True,

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 import mcp.types as types
 
-from .auth import GoogleAuthManager
+from .auth import GoogleAuthManager, find_service_account_key
 from .drive_client import GoogleDriveClient
 from .gmail_client import GmailClient
 from .calendar_client import GoogleCalendarClient
@@ -35,10 +35,13 @@ redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080")
 additional_scopes_str = os.getenv("GOOGLE_ADDITIONAL_SCOPES", "")
 additional_scopes = additional_scopes_str.split() if additional_scopes_str else None
 
-# Validate required configuration
-if not client_id or not client_secret:
+# Validate required configuration. A service account key authenticates on its
+# own, so the OAuth2 client credentials are only required without one.
+if not find_service_account_key() and (not client_id or not client_secret):
     raise ValueError(
-        "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in environment variables. "
+        "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in environment variables, "
+        "or a service account key must be present at "
+        "~/.config/google-mcp-server/service-account.json (or GOOGLE_SERVICE_ACCOUNT_JSON). "
         "See README.md for setup instructions."
     )
 

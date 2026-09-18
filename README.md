@@ -87,6 +87,10 @@ GOOGLE_ADDITIONAL_SCOPES=https://www.googleapis.com/auth/drive https://www.googl
 
 **File**: Scopes are defined in `src/google_mcp_server/auth.py` (`DEFAULT_SCOPES`)
 
+### Service Account Mode
+
+If the OAuth consent screen is blocked for you - [Advanced Protection](https://landing.google.com/advancedprotection/) enrollment does this - or you're running headless on a remote VM, drop a service account key at `~/.config/google-mcp-server/service-account.json` and the server authenticates without a browser. Calendar and Drive only; Gmail and Contacts need domain-wide delegation, which a personal account can't grant. See the [setup guide](docs/setup.md#choosing-an-authentication-mode).
+
 ## 📚 Documentation
 
 - **[Complete Setup Guide](docs/setup.md)** - Detailed Google Cloud Console configuration
